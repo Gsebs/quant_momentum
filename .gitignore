@@ -44,6 +44,7 @@ models/
 # Jupyter Notebook
 .ipynb_checkpoints
 *.ipynb
+!002_quantitative_momentum_strategy.ipynb  # Allow this specific notebook
 
 # OS specific
 .DS_Store
