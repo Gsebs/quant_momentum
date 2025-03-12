@@ -373,6 +373,7 @@ class MomentumStrategy:
         try:
             # Get S&P 500 tickers
             tickers = get_sp500_tickers()
+            logging.info(f"Retrieved {len(tickers)} tickers")
             if not tickers:
                 raise ValueError("No tickers retrieved")
             
@@ -380,23 +381,28 @@ class MomentumStrategy:
             all_signals = []
             for ticker in tickers:
                 try:
+                    logging.info(f"Processing ticker: {ticker}")
                     # Download data for this ticker
-                    data = yf.download(ticker, progress=True)
+                    data = yf.download(ticker, start=config.START_DATE, progress=False)
                     if data.empty:
                         logging.warning(f"No data available for {ticker}")
                         continue
-                        
+                    
+                    logging.info(f"Downloaded {len(data)} rows of data for {ticker}")
+                    
                     # Calculate signals
                     ticker_signals = self._calculate_momentum_signals(data)
                     if ticker_signals is not None and not ticker_signals.empty:
-                        ticker_signals['Ticker'] = ticker
+                        ticker_signals.index = [ticker]  # Set the index to the ticker
                         all_signals.append(ticker_signals)
-                        logging.info(f"Downloaded data for {ticker}")
+                        logging.info(f"Successfully calculated signals for {ticker}")
                     else:
                         logging.warning(f"No signals calculated for {ticker}")
                 except Exception as e:
                     logging.error(f"Error calculating signals for {ticker}: {str(e)}")
                     continue
+            
+            logging.info(f"Calculated signals for {len(all_signals)} tickers")
             
             if not all_signals:
                 raise ValueError("No signals calculated for any tickers")
@@ -409,6 +415,7 @@ class MomentumStrategy:
             
             # Save signals to Excel
             signals.to_excel('data/momentum_signals.xlsx')
+            logging.info(f"Saved signals for {len(signals)} tickers to Excel")
             
             return signals
             
@@ -476,17 +483,17 @@ class MomentumStrategy:
             sma_200 = data['Close'].rolling(window=200).mean()
             trend_strength = (sma_50 - sma_200) / sma_200
             
-            # Get the latest values
+            # Get the latest values (properly extract scalar values)
             latest_returns = {
-                '1M': returns_1m.iloc[-1].iloc[0],
-                '3M': returns_3m.iloc[-1].iloc[0],
-                '6M': returns_6m.iloc[-1].iloc[0],
-                '12M': returns_12m.iloc[-1].iloc[0]
+                '1M': float(returns_1m.iloc[-1]),
+                '3M': float(returns_3m.iloc[-1]),
+                '6M': float(returns_6m.iloc[-1]),
+                '12M': float(returns_12m.iloc[-1])
             }
             
-            latest_volatility = volatility.iloc[-1].iloc[0]
-            latest_rsi = rsi.iloc[-1].iloc[0]
-            latest_trend = trend_strength.iloc[-1].iloc[0]
+            latest_volatility = float(volatility.iloc[-1])
+            latest_rsi = float(rsi.iloc[-1])
+            latest_trend = float(trend_strength.iloc[-1])
             
             # Log the latest values for debugging
             logging.info(f"Latest returns: 1M={returns_1m.iloc[-1:]}, 3M={returns_3m.iloc[-1:]}, 6M={returns_6m.iloc[-1:]}, 12M={returns_12m.iloc[-1:]}")
@@ -531,7 +538,7 @@ class MomentumStrategy:
             # Calculate position size (normalized between 0 and 1)
             position_size = max(0, min(1, (composite_score + 1) / 2))
             
-            # Create signals DataFrame
+            # Create signals DataFrame with ticker as index
             signals = pd.DataFrame({
                 'momentum_score': [momentum_score],
                 'volatility': [latest_volatility],

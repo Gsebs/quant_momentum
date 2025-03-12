@@ -1,47 +1,52 @@
 """
-Configuration settings for the momentum strategy
+Configuration parameters for the momentum strategy.
 """
 
-# Data settings
-START_DATE = '2020-01-01'  # Default start date for historical data
-END_DATE = None  # None means up to current date
+from datetime import datetime, timedelta
+
+# Data parameters
+START_DATE = (datetime.now() - timedelta(days=365*3)).strftime('%Y-%m-%d')  # 3 years of data
+END_DATE = datetime.now().strftime('%Y-%m-%d')
+MIN_PRICE = 5.0  # Minimum stock price
+MIN_VOLUME = 100000  # Minimum average daily volume
 
 # Strategy parameters
-MOMENTUM_WINDOW = 12  # Number of months for momentum calculation
-MIN_PRICE = 5.0  # Minimum stock price for universe filtering
-MIN_VOLUME = 100000  # Minimum average daily volume
-TOP_N_STOCKS = 10  # Number of top stocks to recommend
-
-# Stock universe settings
-MARKET_INDEX = '^GSPC'  # S&P 500 index
-
-# Backtest settings
-REBALANCE_FREQUENCY = 'M'  # Monthly rebalancing
-TRANSACTION_COSTS = 0.001  # 0.1% transaction costs
-
-# File paths
-DATA_DIR = "data"
-RESULTS_DIR = "data/results"
-
-# Database configuration
-DB_PATH = "data/momentum.db"
-
-# Data paths
-SIGNALS_FILE = "momentum_signals.xlsx"
-
-# Model parameters
-MODEL_PATH = "models/momentum_model.joblib"
-LOOKBACK_PERIODS = {
-    "1m": 21,    # 1 month
-    "3m": 63,    # 3 months
-    "6m": 126,   # 6 months
-    "12m": 252   # 12 months
+TOP_N_STOCKS = 10  # Number of stocks to hold in portfolio
+MOMENTUM_WEIGHTS = {
+    '1M': 0.4,
+    '3M': 0.3,
+    '6M': 0.2,
+    '12M': 0.1
 }
 
-# ML model parameters
-ML_PARAMS = {
-    "n_estimators": 100,
-    "learning_rate": 0.1,
-    "max_depth": 3,
-    "random_state": 42
-} 
+# Risk management parameters
+MAX_POSITION_SIZE = 0.20  # Maximum position size as fraction of portfolio
+STOP_LOSS = 0.10  # Stop loss percentage
+MAX_SECTOR_EXPOSURE = 0.30  # Maximum exposure to any sector
+
+# Technical indicator parameters
+RSI_PERIOD = 14
+MACD_FAST = 12
+MACD_SLOW = 26
+MACD_SIGNAL = 9
+VOLATILITY_WINDOW = 252  # One year of trading days
+
+# Backtest parameters
+INITIAL_CAPITAL = 100000
+COMMISSION = 0.001  # 0.1% commission per trade
+SLIPPAGE = 0.001  # 0.1% slippage per trade
+
+# Machine learning parameters
+TRAIN_TEST_SPLIT = 0.8
+RANDOM_STATE = 42
+N_ESTIMATORS = 100
+
+# File paths
+DATA_DIR = 'data'
+SIGNALS_FILE = f'{DATA_DIR}/momentum_signals.xlsx'
+REPORT_FILE = f'{DATA_DIR}/momentum_report.xlsx'
+DB_FILE = f'{DATA_DIR}/momentum.db'
+
+# Logging configuration
+LOG_LEVEL = 'INFO'
+LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s' 
