@@ -33,30 +33,21 @@ def initialize_data():
         logger.error(f"Error initializing data: {str(e)}", exc_info=True)
         raise
 
-@app.route('/api/momentum-signals', methods=['GET'])
+@app.route('/api/momentum-signals')
 def get_momentum_signals():
+    """Get momentum trading signals."""
+    logger.info("Running strategy to generate fresh signals...")
+    logger.info("Initializing data...")
+    
     try:
-        # Run the strategy to generate fresh signals
-        logger.info("Running strategy to generate fresh signals...")
-        initialize_data()  # Initialize data when endpoint is called
-        
-        # Read the generated signals
-        signals_file = 'data/momentum_signals.xlsx'
-        if not os.path.exists(signals_file):
+        results = run_strategy()
+        if not results:
             return jsonify({'error': 'No momentum signals available'}), 404
             
-        df = pd.read_excel(signals_file)
-        
-        # Convert DataFrame to dict for JSON response
-        signals = df.to_dict(orient='records')
-        
-        return jsonify({
-            'signals': signals,
-            'generated_at': datetime.now().isoformat()
-        })
+        return jsonify(results)
         
     except Exception as e:
-        logger.error(f"Error generating momentum signals: {str(e)}", exc_info=True)
+        logger.error(f"Error generating momentum signals: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/performance', methods=['GET'])

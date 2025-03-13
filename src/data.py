@@ -30,8 +30,16 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 RELIABLE_TICKERS = [
-    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA',
-    'META', 'BRK-B', 'JPM', 'V', 'XOM'
+    'AAPL',  # Apple
+    'MSFT',  # Microsoft
+    'GOOGL', # Alphabet (Google)
+    'AMZN',  # Amazon
+    'META',  # Meta (Facebook)
+    'NVDA',  # NVIDIA
+    'TSLA',  # Tesla
+    'JPM',   # JPMorgan Chase
+    'V',     # Visa
+    'WMT'    # Walmart
 ]
 
 def get_sp500_tickers() -> List[str]:
