@@ -12,6 +12,7 @@ We could add more data sources later, like getting stocks from other indexes
 or maybe even crypto!
 """
 
+import os
 import pandas as pd
 import numpy as np
 import requests
@@ -22,7 +23,6 @@ from typing import List, Optional, Dict
 import time
 from datetime import datetime, timedelta
 import pickle
-import os.path
 import random
 import asyncio
 import aiohttp
@@ -256,4 +256,30 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
         
     except Exception as e:
         logger.error(f"Error getting market data: {str(e)}")
-        return pd.DataFrame() 
+        return pd.DataFrame()
+
+async def _get_stock_data_async(ticker):
+    """Get stock data for a single ticker asynchronously."""
+    try:
+        stock = yf.Ticker(ticker)
+        data = await asyncio.to_thread(stock.history, period="2y")
+        if data.empty:
+            logger.error(f"Empty data received for {ticker}")
+            return None
+        return data
+    except Exception as e:
+        logger.error(f"Error getting data for {ticker}: {str(e)}")
+        return None
+
+async def _batch_data_async(tickers):
+    """Get stock data for a batch of tickers asynchronously."""
+    tasks = []
+    for ticker in tickers:
+        tasks.append(_get_stock_data_async(ticker))
+    
+    results = await asyncio.gather(*tasks)
+    return {ticker: data for ticker, data in zip(tickers, results) if data is not None}
+
+def get_batch_data_async(tickers):
+    """Synchronous wrapper for async batch data retrieval."""
+    return asyncio.run(_batch_data_async(tickers)) 
