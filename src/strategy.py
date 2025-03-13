@@ -38,6 +38,8 @@ from . import db
 from joblib import load
 import concurrent.futures
 import requests.exceptions
+import pickle
+import os.path
 
 # Just basic logging setup to see what's happening
 logging.basicConfig(level=logging.INFO)
@@ -46,11 +48,40 @@ logger = logging.getLogger(__name__)
 # Create necessary directories
 os.makedirs('data', exist_ok=True)
 os.makedirs('data/reports', exist_ok=True)
+os.makedirs('data/cache', exist_ok=True)
 os.makedirs('models', exist_ok=True)
 
-def get_stock_data(ticker: str, start_date: str, end_date: str, max_retries: int = 3, timeout: int = 5) -> Optional[pd.DataFrame]:
+def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+    """Get data from cache if available and not expired."""
+    cache_file = f'data/cache/{ticker}.pkl'
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                cached_data = pickle.load(f)
+                cache_date = cached_data.get('date')
+                # Cache is valid for 4 hours
+                if cache_date and datetime.now() - cache_date < timedelta(hours=4):
+                    return cached_data.get('data')
+        except Exception as e:
+            logger.warning(f"Error reading cache for {ticker}: {str(e)}")
+    return None
+
+def save_to_cache(ticker: str, data: pd.DataFrame) -> None:
+    """Save data to cache with timestamp."""
+    try:
+        cache_file = f'data/cache/{ticker}.pkl'
+        cache_data = {
+            'date': datetime.now(),
+            'data': data
+        }
+        with open(cache_file, 'wb') as f:
+            pickle.dump(cache_data, f)
+    except Exception as e:
+        logger.warning(f"Error saving cache for {ticker}: {str(e)}")
+
+def get_stock_data(ticker: str, start_date: str, end_date: str, max_retries: int = 3, timeout: int = 10) -> Optional[pd.DataFrame]:
     """
-    Get stock data with retries and timeout.
+    Get stock data with retries, timeout, and caching.
     
     Args:
         ticker: Stock ticker symbol
@@ -62,17 +93,25 @@ def get_stock_data(ticker: str, start_date: str, end_date: str, max_retries: int
     Returns:
         DataFrame with stock data or None if failed
     """
+    # Try to get from cache first
+    cached_data = get_cached_data(ticker, start_date, end_date)
+    if cached_data is not None:
+        return cached_data
+        
     for attempt in range(max_retries):
         try:
             stock = yf.Ticker(ticker)
             data = stock.history(start=start_date, end=end_date, timeout=timeout)
             if not data.empty:
+                # Save successful response to cache
+                save_to_cache(ticker, data)
                 return data
         except (requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
             if attempt == max_retries - 1:
                 logger.warning(f"Failed to get data for {ticker} after {max_retries} attempts: {str(e)}")
             else:
-                time.sleep(1)  # Wait before retrying
+                # Exponential backoff between retries
+                time.sleep((attempt + 1) * 2)
         except Exception as e:
             logger.warning(f"Error getting data for {ticker}: {str(e)}")
             break
@@ -311,6 +350,12 @@ def run_strategy() -> None:
             logger.error("Failed to get S&P 500 tickers")
             return
             
+        # For testing, start with a smaller subset
+        test_mode = os.environ.get('TEST_MODE', 'false').lower() == 'true'
+        if test_mode:
+            logger.info("Running in test mode with reduced ticker set")
+            tickers = tickers[:50]  # Start with 50 stocks for testing
+            
         # Calculate lookback period
         end_date = datetime.now()
         start_date = end_date - timedelta(days=400)  # Get more than a year of data
@@ -319,8 +364,8 @@ def run_strategy() -> None:
         momentum_data = []
         stock_data = {}
         
-        # Use ThreadPoolExecutor for parallel data fetching
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Use ThreadPoolExecutor for parallel data fetching with limited concurrency
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             future_to_ticker = {
                 executor.submit(
                     get_stock_data, 
@@ -330,10 +375,18 @@ def run_strategy() -> None:
                 ): ticker for ticker in tickers
             }
             
+            completed = 0
+            total = len(tickers)
+            
             for future in concurrent.futures.as_completed(future_to_ticker):
                 ticker = future_to_ticker[future]
                 try:
                     data = future.result()
+                    completed += 1
+                    
+                    if completed % 10 == 0:
+                        logger.info(f"Processed {completed}/{total} stocks")
+                        
                     if data is not None and not data.empty and filter_universe(data):
                         stock_data[ticker] = data
                         metrics = compute_momentum(data)
