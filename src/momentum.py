@@ -7,6 +7,43 @@ import numpy as np
 import logging
 from typing import Dict, List, Optional
 
+def calculate_momentum_score(data: pd.DataFrame) -> float:
+    """
+    Calculate momentum score for a single stock.
+    
+    Args:
+        data (pd.DataFrame): DataFrame with historical price data for a single stock
+        
+    Returns:
+        float: Momentum score
+    """
+    try:
+        # Sort by date
+        data = data.sort_values('Date')
+        
+        # Calculate returns for different periods
+        last_price = data['Close'].iloc[-1]
+        returns = {
+            '1m_return': (data['Close'].iloc[-1] / data['Close'].iloc[-22] - 1) * 100,
+            '3m_return': (data['Close'].iloc[-1] / data['Close'].iloc[-66] - 1) * 100,
+            '6m_return': (data['Close'].iloc[-1] / data['Close'].iloc[-132] - 1) * 100,
+            '12m_return': (data['Close'].iloc[-1] / data['Close'].iloc[0] - 1) * 100
+        }
+        
+        # Calculate momentum score
+        momentum_score = (
+            returns['1m_return'] * 0.4 +
+            returns['3m_return'] * 0.3 +
+            returns['6m_return'] * 0.2 +
+            returns['12m_return'] * 0.1
+        )
+        
+        return momentum_score
+        
+    except Exception as e:
+        logging.error(f"Error calculating momentum score: {str(e)}")
+        return None
+
 def calculate_momentum_metrics(data: pd.DataFrame) -> pd.DataFrame:
     """
     Calculate momentum metrics for each stock.
