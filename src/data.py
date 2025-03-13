@@ -24,8 +24,15 @@ from datetime import datetime, timedelta
 import pickle
 import os.path
 import random
+import asyncio
+import aiohttp
 
 logger = logging.getLogger(__name__)
+
+RELIABLE_TICKERS = [
+    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA',
+    'META', 'BRK-B', 'JPM', 'V', 'XOM'
+]
 
 def get_sp500_tickers() -> List[str]:
     """
@@ -43,13 +50,9 @@ def get_sp500_tickers() -> List[str]:
         return tickers
     except Exception as e:
         logger.error(f"Error getting S&P 500 tickers: {str(e)}")
-        # Fallback to a reliable subset of tickers
-        fallback_tickers = [
-            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA',
-            'META', 'BRK-B', 'JPM', 'V', 'XOM'
-        ]
-        logger.info(f"Using fallback list of {len(fallback_tickers)} tickers")
-        return fallback_tickers
+        # Use reliable tickers as fallback
+        logger.info(f"Using fallback list of {len(RELIABLE_TICKERS)} tickers")
+        return RELIABLE_TICKERS
 
 def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """Get data from cache if available and not expired."""
@@ -79,15 +82,15 @@ def save_to_cache(ticker: str, data: pd.DataFrame) -> None:
     except Exception as e:
         logger.warning(f"Error saving cache for {ticker}: {str(e)}")
 
-def get_stock_data(ticker: str, start_date: str, end_date: str, max_retries: int = 3) -> Optional[pd.DataFrame]:
+async def get_stock_data_async(ticker: str, start_date: str, end_date: str, session: aiohttp.ClientSession) -> Optional[pd.DataFrame]:
     """
-    Get historical stock data with retries and caching.
+    Get historical stock data asynchronously.
     
     Args:
         ticker: Stock ticker symbol
         start_date: Start date in YYYY-MM-DD format
         end_date: End date in YYYY-MM-DD format
-        max_retries: Maximum number of retry attempts
+        session: aiohttp client session
         
     Returns:
         DataFrame with stock data or None if retrieval fails
@@ -98,15 +101,14 @@ def get_stock_data(ticker: str, start_date: str, end_date: str, max_retries: int
         return cached_data
         
     # If not in cache, fetch from API
-    for attempt in range(max_retries):
+    for attempt in range(3):
         try:
             # Add jitter to avoid synchronized retries
             if attempt > 0:
-                jitter = random.uniform(0, 2)
-                time.sleep(5 * attempt + jitter)
+                await asyncio.sleep(5 * attempt + random.uniform(0, 2))
                 
             stock = yf.Ticker(ticker)
-            data = stock.history(start=start_date, end=end_date, timeout=15)
+            data = stock.history(start=start_date, end=end_date, timeout=20)
             
             if not data.empty:
                 # Save successful response to cache
@@ -117,12 +119,12 @@ def get_stock_data(ticker: str, start_date: str, end_date: str, max_retries: int
             logger.warning(f"Attempt {attempt + 1} failed for {ticker}: {str(e)}")
             if "rate limit" in str(e).lower():
                 # Add extra delay for rate limits
-                time.sleep(10)
+                await asyncio.sleep(10)
             
-    logger.error(f"Failed to get data for {ticker} after {max_retries} attempts")
+    logger.error(f"Failed to get data for {ticker} after 3 attempts")
     return None
 
-def get_batch_data(
+async def get_batch_data_async(
     tickers: List[str],
     start_date: str,
     end_date: str,
@@ -130,7 +132,7 @@ def get_batch_data(
     delay: int = 5
 ) -> Dict[str, pd.DataFrame]:
     """
-    Get stock data in batches to handle rate limits.
+    Get stock data in batches asynchronously.
     
     Args:
         tickers: List of stock tickers
@@ -145,22 +147,48 @@ def get_batch_data(
     stock_data = {}
     total_batches = (len(tickers) + batch_size - 1) // batch_size
     
-    for i in range(0, len(tickers), batch_size):
-        batch = tickers[i:i + batch_size]
-        batch_num = (i // batch_size) + 1
-        logger.info(f"Processing batch {batch_num}/{total_batches}")
-        
-        for ticker in batch:
-            data = get_stock_data(ticker, start_date, end_date)
-            if data is not None and not data.empty:
-                stock_data[ticker] = data
-                
-        if i + batch_size < len(tickers):
-            # Add jitter to delay
-            jitter = random.uniform(0, 2)
-            time.sleep(delay + jitter)
+    async with aiohttp.ClientSession() as session:
+        for i in range(0, len(tickers), batch_size):
+            batch = tickers[i:i + batch_size]
+            batch_num = (i // batch_size) + 1
+            logger.info(f"Processing batch {batch_num}/{total_batches}")
             
+            # Process batch concurrently
+            tasks = [
+                get_stock_data_async(ticker, start_date, end_date, session)
+                for ticker in batch
+            ]
+            results = await asyncio.gather(*tasks)
+            
+            # Store valid results
+            for ticker, data in zip(batch, results):
+                if data is not None and not data.empty:
+                    stock_data[ticker] = data
+                    
+            if i + batch_size < len(tickers):
+                # Add jitter to delay
+                await asyncio.sleep(delay + random.uniform(0, 2))
+                
     return stock_data
+
+def get_batch_data(
+    tickers: List[str],
+    start_date: str,
+    end_date: str,
+    batch_size: int = 2,
+    delay: int = 5
+) -> Dict[str, pd.DataFrame]:
+    """
+    Synchronous wrapper for async batch data retrieval.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(
+            get_batch_data_async(tickers, start_date, end_date, batch_size, delay)
+        )
+    finally:
+        loop.close()
 
 def validate_stock_data(data: pd.DataFrame) -> bool:
     """

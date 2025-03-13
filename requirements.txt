@@ -15,4 +15,5 @@ nbformat>=5.1.3
 requests>=2.26.0
 beautifulsoup4>=4.9.3
 ta>=0.7.0  # Technical analysis indicators
-pytest>=6.2.5  # For testing 
+pytest>=6.2.5  # For testing
+aiohttp==3.9.3 
