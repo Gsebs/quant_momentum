@@ -26,8 +26,8 @@ from src.reporting import generate_report
 from src.indicators import calculate_momentum_indicators, calculate_rsi, calculate_macd
 from src.risk import calculate_risk_metrics, calculate_position_sizes, analyze_sector_exposure
 from src.backtest import MomentumBacktest, backtest_strategy, BacktestResult, run_backtest_from_recommendations
-from src.data import get_sp500_tickers, get_batch_data, validate_stock_data
-from src.momentum import calculate_momentum_metrics
+from src.data import get_sp500_tickers, get_batch_data, get_batch_data_async, validate_stock_data
+from src.momentum import calculate_momentum_metrics, calculate_momentum_score
 import time
 from . import momentum
 from . import ml_model
@@ -335,64 +335,59 @@ def filter_universe(data: pd.DataFrame) -> bool:
         logger.error(f"Error filtering universe: {str(e)}")
         return False
 
-def run_strategy(test_mode=False):
+def run_strategy():
     """Run the momentum trading strategy."""
-    logger.info("Running in production mode with reliable ticker set")
-    
-    # Get tickers
-    tickers = get_sp500_tickers()
-    
-    # Split tickers into batches of 5 for parallel processing
-    batch_size = 5
-    ticker_batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
-    
-    all_data = {}
-    successful_tickers = []
-    
-    for i, batch in enumerate(ticker_batches, 1):
-        logger.info(f"Processing batch {i}/{len(ticker_batches)}")
-        batch_data = get_batch_data_async(batch)
+    try:
+        logger.info("Starting momentum strategy execution")
         
-        # Add successfully retrieved data to our collection
-        for ticker, data in batch_data.items():
-            if data is not None and not data.empty:
-                all_data[ticker] = data
-                successful_tickers.append(ticker)
-                logger.info(f"Successfully processed {ticker}")
-    
-    if not successful_tickers:
-        logger.error("No valid stock data retrieved")
+        # Get tickers
+        tickers = get_sp500_tickers()
+        if os.getenv('TEST_MODE', 'false').lower() == 'true':
+            logger.info("Running in test mode with reduced ticker set")
+            tickers = tickers[:50]
+        
+        logger.info(f"Retrieved {len(tickers)} tickers")
+        
+        # Get historical data for all tickers
+        logger.info("Retrieving historical data...")
+        stock_data = get_batch_data_async(tickers)
+        
+        if not stock_data:
+            logger.error("No valid stock data retrieved")
+            return None
+            
+        logger.info(f"Successfully retrieved data for {len(stock_data)} stocks")
+        
+        # Calculate momentum scores
+        momentum_scores = {}
+        for ticker, data in stock_data.items():
+            try:
+                score = calculate_momentum_score(data)
+                if score is not None:
+                    momentum_scores[ticker] = score
+            except Exception as e:
+                logger.error(f"Error calculating momentum for {ticker}: {str(e)}")
+                continue
+        
+        if not momentum_scores:
+            logger.error("No valid momentum scores calculated")
+            return None
+            
+        # Rank stocks by momentum score
+        ranked_stocks = sorted(momentum_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        # Format results
+        results = {
+            'timestamp': datetime.now().isoformat(),
+            'signals': [{'ticker': ticker, 'momentum_score': score} for ticker, score in ranked_stocks]
+        }
+        
+        logger.info(f"Strategy execution completed. Generated signals for {len(results['signals'])} stocks")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error in strategy execution: {str(e)}")
         return None
-    
-    logger.info(f"Successfully retrieved data for {len(successful_tickers)} stocks")
-    
-    # Calculate momentum scores for stocks with valid data
-    momentum_scores = {}
-    for ticker in successful_tickers:
-        try:
-            data = all_data[ticker]
-            momentum_score = calculate_momentum_score(data)
-            if momentum_score is not None:
-                momentum_scores[ticker] = momentum_score
-        except Exception as e:
-            logger.error(f"Error calculating momentum for {ticker}: {str(e)}")
-    
-    if not momentum_scores:
-        logger.error("No valid momentum scores calculated")
-        return None
-    
-    # Sort stocks by momentum score
-    ranked_stocks = sorted(momentum_scores.items(), key=lambda x: x[1], reverse=True)
-    
-    # Create final output
-    results = {
-        'timestamp': datetime.now().isoformat(),
-        'signals': [{'ticker': ticker, 'momentum_score': score} for ticker, score in ranked_stocks],
-        'successful_tickers': len(successful_tickers),
-        'total_tickers': len(tickers)
-    }
-    
-    return results
 
 if __name__ == '__main__':
     run_strategy() 
