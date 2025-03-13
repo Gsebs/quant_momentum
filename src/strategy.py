@@ -354,7 +354,7 @@ def run_strategy() -> None:
         test_mode = os.environ.get('TEST_MODE', 'false').lower() == 'true'
         if test_mode:
             logger.info("Running in test mode with reduced ticker set")
-            tickers = tickers[:15]  # Start with 15 stocks for testing
+            tickers = tickers[:5]  # Start with 5 stocks for testing
             
         # Calculate lookback period
         end_date = datetime.now()
@@ -365,10 +365,14 @@ def run_strategy() -> None:
             tickers,
             get_date_str(start_date),
             get_date_str(end_date),
-            batch_size=3,  # Small batches to avoid rate limits
-            delay=3  # 3 second delay between batches
+            batch_size=2,  # Small batches to avoid rate limits
+            delay=5  # 5 second delay between batches
         )
         
+        if not stock_data:
+            logger.error("No valid stock data retrieved")
+            return
+            
         # Calculate momentum for stocks with valid data
         momentum_data = []
         for ticker, data in stock_data.items():
@@ -378,6 +382,7 @@ def run_strategy() -> None:
                     if metrics:
                         metrics['ticker'] = ticker
                         momentum_data.append(metrics)
+                        logger.info(f"Successfully calculated momentum for {ticker}")
             except Exception as e:
                 logger.error(f"Error processing {ticker}: {str(e)}")
         
@@ -385,8 +390,11 @@ def run_strategy() -> None:
             logger.error("No valid momentum data calculated")
             return
             
+        # Convert to DataFrame for easier handling
+        momentum_df = pd.DataFrame(momentum_data)
+        
         # Rank stocks
-        ranked_stocks = rank_stocks(momentum_data)
+        ranked_stocks = rank_stocks(momentum_df)
         if ranked_stocks.empty:
             logger.error("Failed to rank stocks")
             return
@@ -407,6 +415,7 @@ def run_strategy() -> None:
         
     except Exception as e:
         logger.error(f"Error running strategy: {str(e)}")
+        raise
 
 if __name__ == '__main__':
     run_strategy() 

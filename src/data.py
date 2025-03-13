@@ -13,15 +13,17 @@ or maybe even crypto!
 """
 
 import pandas as pd
+import numpy as np
 import requests
 import logging
-import bs4
+import bs4 as bs
 import yfinance as yf
 from typing import List, Optional, Dict
 import time
 from datetime import datetime, timedelta
 import pickle
 import os.path
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ def get_sp500_tickers() -> List[str]:
     """
     try:
         resp = requests.get('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
-        soup = bs4.BeautifulSoup(resp.text, 'lxml')
+        soup = bs.BeautifulSoup(resp.text, 'lxml')
         table = soup.find('table', {'class': 'wikitable'})
         tickers = []
         for row in table.findAll('tr')[1:]:
@@ -41,7 +43,13 @@ def get_sp500_tickers() -> List[str]:
         return tickers
     except Exception as e:
         logger.error(f"Error getting S&P 500 tickers: {str(e)}")
-        return []
+        # Fallback to a reliable subset of tickers
+        fallback_tickers = [
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA',
+            'META', 'BRK-B', 'JPM', 'V', 'XOM'
+        ]
+        logger.info(f"Using fallback list of {len(fallback_tickers)} tickers")
+        return fallback_tickers
 
 def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """Get data from cache if available and not expired."""
@@ -51,8 +59,8 @@ def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.
             with open(cache_file, 'rb') as f:
                 cached_data = pickle.load(f)
                 cache_date = cached_data.get('date')
-                # Cache is valid for 4 hours
-                if cache_date and datetime.now() - cache_date < timedelta(hours=4):
+                # Cache is valid for 24 hours
+                if cache_date and datetime.now() - cache_date < timedelta(hours=24):
                     return cached_data.get('data')
         except Exception as e:
             logger.warning(f"Error reading cache for {ticker}: {str(e)}")
@@ -92,20 +100,24 @@ def get_stock_data(ticker: str, start_date: str, end_date: str, max_retries: int
     # If not in cache, fetch from API
     for attempt in range(max_retries):
         try:
+            # Add jitter to avoid synchronized retries
+            if attempt > 0:
+                jitter = random.uniform(0, 2)
+                time.sleep(5 * attempt + jitter)
+                
             stock = yf.Ticker(ticker)
-            data = stock.history(start=start_date, end=end_date, timeout=10)
+            data = stock.history(start=start_date, end=end_date, timeout=15)
             
             if not data.empty:
                 # Save successful response to cache
                 save_to_cache(ticker, data)
                 return data
                 
-            time.sleep(2 * (attempt + 1))  # Exponential backoff
-            
         except Exception as e:
             logger.warning(f"Attempt {attempt + 1} failed for {ticker}: {str(e)}")
-            if attempt < max_retries - 1:
-                time.sleep(2 * (attempt + 1))
+            if "rate limit" in str(e).lower():
+                # Add extra delay for rate limits
+                time.sleep(10)
             
     logger.error(f"Failed to get data for {ticker} after {max_retries} attempts")
     return None
@@ -114,8 +126,8 @@ def get_batch_data(
     tickers: List[str],
     start_date: str,
     end_date: str,
-    batch_size: int = 3,
-    delay: int = 3
+    batch_size: int = 2,
+    delay: int = 5
 ) -> Dict[str, pd.DataFrame]:
     """
     Get stock data in batches to handle rate limits.
@@ -140,11 +152,13 @@ def get_batch_data(
         
         for ticker in batch:
             data = get_stock_data(ticker, start_date, end_date)
-            if data is not None:
+            if data is not None and not data.empty:
                 stock_data[ticker] = data
                 
         if i + batch_size < len(tickers):
-            time.sleep(delay)
+            # Add jitter to delay
+            jitter = random.uniform(0, 2)
+            time.sleep(delay + jitter)
             
     return stock_data
 
