@@ -23,8 +23,6 @@ os.makedirs('data', exist_ok=True)
 os.makedirs('data/reports', exist_ok=True)
 os.makedirs('data/charts', exist_ok=True)
 
-# Initialize data on startup
-@app.before_first_request
 def initialize_data():
     try:
         logger.info("Initializing data...")
@@ -40,7 +38,7 @@ def get_momentum_signals():
     try:
         # Run the strategy to generate fresh signals
         logger.info("Running strategy to generate fresh signals...")
-        run_strategy()
+        initialize_data()  # Initialize data when endpoint is called
         
         # Read the generated signals
         signals_file = 'data/momentum_signals.xlsx'
@@ -66,7 +64,9 @@ def get_performance():
     try:
         report_file = 'data/reports/momentum_report.xlsx'
         if not os.path.exists(report_file):
-            return jsonify({'error': 'Performance report not available'}), 404
+            initialize_data()  # Try to generate the report if it doesn't exist
+            if not os.path.exists(report_file):
+                return jsonify({'error': 'Performance report not available'}), 404
             
         df = pd.read_excel(report_file)
         performance = df.to_dict(orient='records')
