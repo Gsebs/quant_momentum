@@ -3,6 +3,10 @@ Configuration parameters for the momentum strategy.
 """
 
 from datetime import datetime, timedelta
+import os
+
+# Get workspace root directory
+WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Data parameters
 START_DATE = (datetime.now() - timedelta(days=365*3)).strftime('%Y-%m-%d')  # 3 years of data
@@ -42,10 +46,10 @@ RANDOM_STATE = 42
 N_ESTIMATORS = 100
 
 # File paths
-DATA_DIR = 'data'
-SIGNALS_FILE = f'{DATA_DIR}/momentum_signals.xlsx'
-REPORT_FILE = f'{DATA_DIR}/momentum_report.xlsx'
-DB_FILE = f'{DATA_DIR}/momentum.db'
+DATA_DIR = os.path.join(WORKSPACE_ROOT, 'data')
+SIGNALS_FILE = os.path.join(DATA_DIR, 'momentum_signals.xlsx')
+REPORT_FILE = os.path.join(DATA_DIR, 'momentum_report.xlsx')
+DB_FILE = os.path.join(DATA_DIR, 'momentum.db')
 
 # Logging configuration
 LOG_LEVEL = 'INFO'

@@ -19,120 +19,101 @@ from . import risk
 from . import indicators
 import matplotlib.pyplot as plt
 import seaborn as sns
+from . import config
+import os
 
 logger = logging.getLogger(__name__)
 
 class BacktestResult:
+    """Class to store and analyze backtest results."""
+    
     def __init__(self):
-        """
-        This class is like our report card - it keeps track of everything that happened
-        during our backtest: how much money we made/lost, what trades we did, etc.
-        """
-        self.portfolio_values = pd.Series()  # How our money grew over time
-        self.positions = pd.DataFrame()      # What stocks we held
-        self.trades = pd.DataFrame()         # All our buy/sell moves
-        self.metrics = {}                    # Performance stats
-        self.turnover = pd.Series()          # How much trading we did
+        """Initialize backtest result object."""
+        self.dates = []
+        self.portfolio_values = []
+        self.trades = []
+        self.initial_capital = 0
+        self.metrics = {}
+    
+    def calculate_metrics(self):
+        """Calculate performance metrics."""
+        try:
+            if not self.portfolio_values:
+                self.metrics = {
+                    'total_return': 0.0,
+                    'annualized_return': 0.0,
+                    'max_drawdown': 0.0,
+                    'avg_turnover': 0.0,
+                    'num_trades': 0
+                }
+                return
+            
+            # Calculate returns
+            final_value = self.portfolio_values[-1]
+            total_return = (final_value - self.initial_capital) / self.initial_capital
+            
+            # Calculate annualized return
+            days = (self.dates[-1] - self.dates[0]).days
+            annualized_return = (1 + total_return) ** (365 / days) - 1 if days > 0 else 0
+            
+            # Calculate max drawdown
+            peak = self.portfolio_values[0]
+            max_drawdown = 0
+            for value in self.portfolio_values:
+                if value > peak:
+                    peak = value
+                drawdown = (peak - value) / peak
+                max_drawdown = max(max_drawdown, drawdown)
+            
+            # Calculate turnover
+            total_turnover = sum(trade['shares'] * trade['price'] for trade in self.trades)
+            avg_turnover = total_turnover / self.initial_capital if self.trades else 0
+            
+            # Store metrics
+            self.metrics = {
+                'total_return': total_return,
+                'annualized_return': annualized_return,
+                'max_drawdown': max_drawdown,
+                'avg_turnover': avg_turnover,
+                'num_trades': len(self.trades)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating metrics: {str(e)}")
+            self.metrics = {
+                'total_return': 0.0,
+                'annualized_return': 0.0,
+                'max_drawdown': 0.0,
+                'avg_turnover': 0.0,
+                'num_trades': 0
+            }
     
     def summary(self) -> Dict[str, float]:
-        """
-        This is where we crunch the numbers to see how well we did. We look at:
-        - Total returns (how much money we made)
-        - Risk-adjusted returns (Sharpe ratio - returns vs risk)
-        - Maximum drawdown (biggest loss from peak)
-        - Trading activity (how much we bought/sold)
-        
-        These metrics help us understand if the strategy is actually good or just lucky.
-        """
+        """Return summary of backtest results."""
+        return self.metrics
+    
+    def plot_performance(self, title: str = "Portfolio Performance"):
+        """Plot portfolio value over time."""
         try:
-            if self.portfolio_values.empty:
-                return {}
+            if not self.portfolio_values:
+                logger.error("No portfolio values to plot")
+                return
+                
+            plt.figure(figsize=(12, 6))
+            plt.plot(self.dates, self.portfolio_values)
+            plt.title(title)
+            plt.xlabel("Date")
+            plt.ylabel("Portfolio Value ($)")
+            plt.grid(True)
             
-            # Calculate our daily returns
-            returns = self.portfolio_values.pct_change().dropna()
-            
-            metrics = {}
-            
-            # Total return - this is the bottom line
-            metrics['total_return'] = float((1 + returns).prod() - 1)
-            
-            # Turn it into a yearly number - easier to compare with other investments
-            days = (self.portfolio_values.index[-1] - self.portfolio_values.index[0]).days
-            metrics['annualized_return'] = float((1 + metrics['total_return']) ** (365 / days) - 1)
-            
-            # How risky was it? Higher volatility means more risk
-            metrics['annualized_volatility'] = float(returns.std() * np.sqrt(252))
-            
-            # Sharpe ratio - the holy grail of metrics
-            # Shows how much return we got for the risk we took
-            risk_free_rate = 0.02  # Using 2% as risk-free rate
-            daily_rf = (1 + risk_free_rate) ** (1/252) - 1
-            excess_returns = returns - daily_rf
-            if metrics['annualized_volatility'] > 0:
-                metrics['sharpe_ratio'] = float(metrics['annualized_return'] / metrics['annualized_volatility'])
-            else:
-                metrics['sharpe_ratio'] = 0.0
-            
-            # Maximum drawdown - our biggest losing streak
-            # This is super important - shows how bad things can get
-            cum_returns = (1 + returns).cumprod()
-            rolling_max = cum_returns.expanding().max()
-            drawdowns = cum_returns / rolling_max - 1
-            metrics['max_drawdown'] = float(drawdowns.min())
-            
-            # How much trading we did - important for considering costs
-            if not self.turnover.empty:
-                metrics['avg_turnover'] = float(self.turnover.mean())
-            else:
-                metrics['avg_turnover'] = 0.0
-            
-            # Total number of trades - helps understand strategy activity
-            if not self.trades.empty:
-                metrics['num_trades'] = len(self.trades)
-            else:
-                metrics['num_trades'] = 0
-            
-            return metrics
+            # Save plot
+            os.makedirs("data/reports", exist_ok=True)
+            plt.savefig("data/reports/performance_plot.png")
+            plt.close()
             
         except Exception as e:
-            logger.error(f"Oops, couldn't calculate summary stats: {str(e)}")
-            return {}
-
-    def plot_performance(self, title: str = "Portfolio Performance") -> None:
-        """
-        Creates some cool charts to visualize how we did. Shows:
-        1. Portfolio value over time - the growth of our money
-        2. Drawdowns - when and how badly we lost money
-        
-        These visuals really help spot patterns and potential issues.
-        """
-        try:
-            plt.style.use('seaborn-v0_8')
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
-            
-            # Top chart - how our money grew
-            ax1.plot(self.portfolio_values.index, self.portfolio_values.values, label='Portfolio Value')
-            ax1.set_title('Portfolio Value Over Time')
-            ax1.set_xlabel('Date')
-            ax1.set_ylabel('Value')
-            ax1.grid(True)
-            ax1.legend()
-            
-            # Bottom chart - our losses from peaks (drawdowns)
-            drawdown = (self.portfolio_values / self.portfolio_values.expanding().max() - 1)
-            ax2.fill_between(drawdown.index, drawdown.values, 0, color='red', alpha=0.3)
-            ax2.plot(drawdown.index, drawdown.values, color='red', label='Drawdown')
-            ax2.set_title('Portfolio Drawdown')
-            ax2.set_xlabel('Date')
-            ax2.set_ylabel('Drawdown')
-            ax2.grid(True)
-            ax2.legend()
-            
-            plt.tight_layout()
-            plt.show()
-            
-        except Exception as e:
-            logging.error(f"Error plotting performance: {str(e)}")
+            logger.error(f"Error plotting performance: {str(e)}")
+            raise
 
 class MomentumBacktest:
     def __init__(self, 
@@ -250,26 +231,43 @@ class MomentumBacktest:
             Dictionary of target positions in shares
         """
         try:
-            # Get signals for each ticker
-            signals = {}
-            for ticker in prices:
-                if ticker in self.signals:
-                    signals[ticker] = self.signals[ticker]
-                else:
-                    signals[ticker] = 0.0
-            
-            # Calculate position sizes
-            total_signal = sum(abs(signal) for signal in signals.values())
-            if total_signal == 0:
-                return {ticker: 0.0 for ticker in prices}
-            
-            # Calculate target positions
             target_positions = {}
-            for ticker, signal in signals.items():
-                if ticker in prices and prices[ticker] > 0:
-                    position_size = (signal / total_signal) * portfolio_value
-                    shares = position_size / prices[ticker]
-                    target_positions[ticker] = float(shares)
+            
+            # Keep a cash buffer
+            available_value = portfolio_value * 0.95  # Keep 5% cash buffer
+            
+            for ticker, price in prices.items():
+                if ticker in self.signals and price > 0:
+                    # Get position size from signals (as decimal)
+                    position_size = self.signals[ticker]
+                    
+                    # Calculate target value for this position
+                    target_value = portfolio_value * position_size
+                    
+                    # Limit position value to available value and max position size
+                    max_position_value = min(
+                        target_value,
+                        portfolio_value * self.max_position_size,
+                        available_value
+                    )
+                    
+                    # Calculate target shares
+                    target_shares = max_position_value / price
+                    
+                    # Calculate transaction costs
+                    current_shares = self.positions.get(ticker, 0)
+                    shares_diff = target_shares - current_shares
+                    transaction_value = abs(shares_diff * price)
+                    cost = transaction_value * self.commission
+                    
+                    # Only update if there's a meaningful change and we can afford it
+                    if abs(shares_diff) > 0.01 and transaction_value + cost <= available_value:
+                        target_positions[ticker] = target_shares
+                        available_value -= (transaction_value + cost)
+                        self.num_trades += 1
+                        self.total_turnover += transaction_value / portfolio_value
+                    else:
+                        target_positions[ticker] = current_shares
                 else:
                     target_positions[ticker] = 0.0
             
@@ -308,7 +306,7 @@ class MomentumBacktest:
             portfolio_values = portfolio_values.ffill()
             
             # Calculate returns and risk metrics
-            self.calculate_metrics(portfolio_values)
+            self.calculate_metrics()
             
             return portfolio_values
             
@@ -321,136 +319,101 @@ def backtest_strategy(
     start_date: str,
     end_date: str,
     initial_capital: float = 100000,
-    transaction_cost: float = 0.001,
-    rebalance_freq: int = 20,  # Rebalance every N business days
-    position_sizes: Optional[Dict[str, float]] = None
+    position_sizes: Optional[Dict[str, float]] = None,
+    commission: float = 0.001,  # 0.1% commission
+    slippage: float = 0.001  # 0.1% slippage
 ) -> BacktestResult:
-    """
-    Run backtest on a list of stocks.
-    
-    Args:
-        tickers: List of stock tickers
-        start_date: Start date in YYYY-MM-DD format
-        end_date: End date in YYYY-MM-DD format
-        initial_capital: Initial portfolio value
-        transaction_cost: Transaction cost per trade
-        rebalance_freq: Number of business days between rebalances
-        position_sizes: Dictionary mapping tickers to target position sizes
-        
-    Returns:
-        BacktestResult object with backtest results
-    """
+    """Run backtest simulation."""
     try:
+        # Initialize variables
+        cash = initial_capital
+        positions = {}  # {ticker: shares}
+        portfolio_values = []
+        dates = []
+        trades = []
+        
         # Download historical data
-        logger.info("Downloading historical data for backtesting...")
         data = {}
         for ticker in tickers:
             try:
-                data[ticker] = yf.download(ticker, start=start_date, end=end_date)
+                stock_data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+                if not stock_data.empty:
+                    data[ticker] = stock_data
             except Exception as e:
-                logger.warning(f"Error downloading data for {ticker}: {str(e)}")
-                continue
+                logger.error(f"Error downloading data for {ticker}: {str(e)}")
         
         if not data:
-            raise ValueError("No valid data downloaded")
+            logger.error("No valid historical data available")
+            return BacktestResult()
         
-        # Initialize portfolio
-        portfolio_value = initial_capital
-        cash = portfolio_value
-        positions = {ticker: 0 for ticker in data.keys()}
+        # Get common dates across all stocks
+        common_dates = pd.DatetimeIndex([])
+        for ticker_data in data.values():
+            if common_dates.empty:
+                common_dates = ticker_data.index
+            else:
+                common_dates = common_dates.intersection(ticker_data.index)
         
-        # Create date range
-        dates = pd.date_range(start_date, end_date, freq='B')  # Business days
-        portfolio_values = pd.Series(index=dates, dtype=float)
-        portfolio_values.iloc[0] = initial_capital
-        
-        # Track days since last rebalance and trading metrics
-        days_since_rebalance = 0
-        num_trades = 0
-        total_turnover = 0.0
-        
-        # Run backtest
-        for i in range(1, len(dates)):
-            date = dates[i]
+        # Rebalance portfolio weekly
+        for date in common_dates:
+            current_prices = {}
+            for ticker in tickers:
+                if ticker in data and date in data[ticker].index:
+                    current_prices[ticker] = float(data[ticker].loc[date, 'Close'])
+            
+            # Calculate current portfolio value
             portfolio_value = cash
+            for ticker, shares in positions.items():
+                if ticker in current_prices:
+                    portfolio_value += shares * current_prices[ticker]
             
-            # Update positions with current prices
-            for ticker, ticker_data in data.items():
-                if date in ticker_data.index:
-                    price = float(ticker_data.loc[date, 'Close'].iloc[0])
-                    position_value = positions[ticker] * price
-                    portfolio_value += position_value
-            
-            # Rebalance portfolio if needed
-            days_since_rebalance += 1
-            if days_since_rebalance >= rebalance_freq:
-                active_tickers = [ticker for ticker in tickers if date in data[ticker].index]
-                if active_tickers:
-                    days_since_rebalance = 0
-                    old_positions = positions.copy()
-                    turnover = 0.0
+            # Rebalance on Mondays
+            if date.weekday() == 0:
+                # Calculate target positions
+                for ticker in tickers:
+                    if ticker not in current_prices:
+                        continue
+                        
+                    # Get target position size
+                    target_size = position_sizes.get(ticker, 0) if position_sizes else (1.0 / len(tickers))
+                    target_value = portfolio_value * target_size
                     
-                    # Calculate target positions using provided position sizes
-                    for ticker in active_tickers:
-                        try:
-                            price = float(data[ticker].loc[date, 'Close'].iloc[0])
-                            current_shares = positions[ticker]
-                            
-                            # Use position size from momentum signals if available
-                            if position_sizes and ticker in position_sizes:
-                                target_value = portfolio_value * position_sizes[ticker]
-                            else:
-                                # Fallback to equal weight with max position size limit
-                                base_weight = 1.0 / len(active_tickers)
-                                target_value = portfolio_value * base_weight
-                            
-                            target_shares = (target_value / price)
-                            
-                            # Calculate transaction cost only on the change in position
-                            shares_diff = target_shares - current_shares
-                            transaction_value = abs(shares_diff * price)
-                            cost = transaction_value * transaction_cost
-                            
-                            # Update position and cash if there's a meaningful change
-                            if abs(shares_diff) > 0.01:  # Only count trades above 1% of a share
-                                positions[ticker] = target_shares
-                                cash -= (shares_diff * price + cost)
-                                num_trades += 1
-                                turnover += transaction_value
-                            
-                        except (ValueError, TypeError) as e:
-                            logger.warning(f"Error rebalancing {ticker}: {str(e)}")
-                            continue
+                    # Calculate target shares
+                    price = current_prices[ticker]
+                    target_shares = int(target_value / price)
                     
-                    # Update total turnover
-                    if portfolio_value > 0:
-                        total_turnover += turnover / portfolio_value
+                    # Calculate trade cost
+                    trade_cost = target_shares * price * (commission + slippage)
+                    
+                    # Check if we have enough cash for the trade
+                    if target_shares > 0 and target_shares * price + trade_cost <= cash:
+                        # Record trade
+                        trades.append({
+                            'date': date,
+                            'ticker': ticker,
+                            'shares': target_shares,
+                            'price': price,
+                            'cost': trade_cost
+                        })
+                        
+                        # Update positions and cash
+                        positions[ticker] = target_shares
+                        cash -= (target_shares * price + trade_cost)
             
-            # Update portfolio value
-            portfolio_values.iloc[i] = portfolio_value if portfolio_value > 0 else portfolio_values.iloc[i-1]
+            # Record portfolio value
+            portfolio_values.append(portfolio_value)
+            dates.append(date)
         
-        # Clean up any missing values
-        portfolio_values = portfolio_values.ffill()
-        
-        # Calculate average turnover
-        avg_turnover = total_turnover / (len(dates) / rebalance_freq) if len(dates) > 0 else 0
-        
-        # Create BacktestResult object
+        # Create result object
         result = BacktestResult()
+        result.dates = dates
         result.portfolio_values = portfolio_values
-        result.positions = pd.DataFrame(positions, index=[dates[-1]])
-        result.metrics = {
-            'initial_capital': initial_capital,
-            'final_value': portfolio_values.iloc[-1],
-            'total_return': (portfolio_values.iloc[-1] - initial_capital) / initial_capital,
-            'annualized_return': (1 + (portfolio_values.iloc[-1] - initial_capital) / initial_capital) ** (252 / len(dates)) - 1,
-            'max_drawdown': (portfolio_values / portfolio_values.cummax() - 1).min(),
-            'avg_turnover': avg_turnover,
-            'num_trades': num_trades
-        }
+        result.trades = trades
+        result.initial_capital = initial_capital
+        result.calculate_metrics()
         
         return result
-    
+        
     except Exception as e:
         logger.error(f"Error running backtest: {str(e)}")
         raise
@@ -466,6 +429,7 @@ def run_backtest_from_recommendations(
     try:
         # Read recommendations
         df = pd.read_excel(recommendations_file)
+        df = df.rename(columns={'Unnamed: 0': 'Ticker'})  # Rename Unnamed: 0 column to Ticker
         top_stocks = df.nlargest(top_n, 'composite_score')
         
         # Run backtest with position sizes

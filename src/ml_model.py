@@ -12,6 +12,7 @@ from typing import Dict, Optional, Tuple
 import joblib
 import os
 import yfinance as yf
+from joblib import load
 
 logger = logging.getLogger(__name__)
 
@@ -264,138 +265,46 @@ class MomentumMLModel:
             logger.error(f"Error loading model: {str(e)}")
             return False
 
-def enhance_momentum_signals(data: pd.DataFrame) -> pd.DataFrame:
-    """
-    Enhance momentum signals using machine learning.
-    
-    Args:
-        data: DataFrame with momentum metrics and technical indicators
-        
-    Returns:
-        DataFrame with enhanced momentum scores
-    """
+def enhance_signals(momentum_data: pd.DataFrame) -> pd.DataFrame:
+    """Enhance momentum signals with ML predictions."""
     try:
-        # Create and train model
-        model = MomentumMLModel()
+        # Create a copy to avoid modifying the original
+        enhanced_data = momentum_data.copy()
         
-        # Prepare features and target
-        feature_cols = [
-            'returns', 'volatility', 'volume_ratio', 'rsi', 'macd',
-            'histogram', 'roc_5', 'roc_10', 'roc_20', 'trend_strength',
-            'momentum_signal', 'volatility_adjusted_returns'
-        ]
+        # Calculate ranks for technical indicators
+        enhanced_data['rsi_rank'] = enhanced_data['rsi'].rank(pct=True)
+        enhanced_data['macd_rank'] = enhanced_data['macd'].rank(pct=True)
+        enhanced_data['volatility_rank'] = enhanced_data['volatility'].rank(pct=True)
         
-        # Get historical data for training
-        tickers = data['Ticker'].unique()
-        historical_data = pd.DataFrame()
-        
-        for ticker in tickers:
+        # Try to load the ML model
+        model_path = 'models/momentum_model.joblib'
+        if os.path.exists(model_path):
             try:
-                # Download 1 year of historical data
-                hist = yf.download(ticker, start=(pd.Timestamp.now() - pd.DateOffset(years=1)).strftime('%Y-%m-%d'))
+                model = load(model_path)
+                logger.info(f"Model loaded from {model_path}")
                 
-                # Calculate features for historical data
-                hist_features = pd.DataFrame()
+                # Prepare features for prediction
+                features = enhanced_data[[
+                    'rsi_rank', 'macd_rank', 'volatility_rank',
+                    'volume_ratio', 'trend_strength'
+                ]].fillna(0)
                 
-                # Returns and volatility
-                hist_features['returns'] = hist['Close'].pct_change()
-                hist_features['volatility'] = hist_features['returns'].rolling(window=20).std()
-                
-                # Volume ratio
-                hist_features['volume_ratio'] = hist['Volume'] / hist['Volume'].rolling(window=20).mean()
-                
-                # RSI
-                delta = hist['Close'].diff()
-                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                rs = gain / loss
-                hist_features['rsi'] = 100 - (100 / (1 + rs))
-                
-                # MACD
-                exp1 = hist['Close'].ewm(span=12, adjust=False).mean()
-                exp2 = hist['Close'].ewm(span=26, adjust=False).mean()
-                hist_features['macd'] = exp1 - exp2
-                hist_features['histogram'] = hist_features['macd'] - hist_features['macd'].ewm(span=9, adjust=False).mean()
-                
-                # Rate of change
-                for period in [5, 10, 20]:
-                    hist_features[f'roc_{period}'] = hist['Close'].pct_change(periods=period)
-                
-                # Trend strength
-                hist_features['trend_strength'] = abs(hist['Close'].pct_change(20))
-                
-                # Channel position for momentum signal
-                rolling_mean = hist['Close'].rolling(window=20).mean()
-                rolling_std = hist['Close'].rolling(window=20).std()
-                channel_position = (hist['Close'] - rolling_mean) / rolling_std
-                
-                # Momentum signal
-                hist_features['momentum_signal'] = (
-                    0.3 * hist_features['rsi'] +
-                    0.3 * channel_position +
-                    0.2 * (hist['Close'] > hist['Close'].rolling(window=50).mean()).astype(float) +
-                    0.2 * (hist['Close'] > hist['Close'].rolling(window=200).mean()).astype(float)
-                )
-                
-                # Volatility adjusted returns
-                hist_features['volatility_adjusted_returns'] = hist_features['returns'] / hist_features['volatility']
-                
-                # Calculate forward returns (target)
-                hist_features['forward_returns'] = hist_features['returns'].rolling(window=20).sum().shift(-20)
-                
-                # Add ticker column
-                hist_features['Ticker'] = ticker
-                
-                # Append to historical data
-                historical_data = pd.concat([historical_data, hist_features])
+                # Make predictions
+                predictions = model.predict_proba(features)[:, 1]
+                enhanced_data['ml_score'] = predictions * 100
                 
             except Exception as e:
-                logging.warning(f"Error processing historical data for {ticker}: {str(e)}")
-                continue
-        
-        # Clean up historical data
-        historical_data = historical_data.dropna()
-        
-        if len(historical_data) > 0:
-            # Train model on historical data
-            X_train = historical_data[feature_cols]
-            y_train = historical_data['forward_returns']
-            
-            logging.info(f"Training data shape: {X_train.shape}")
-            model.train(X_train, y_train)
-            
-            # Generate predictions for current data
-            predictions = model.predict(data[feature_cols])
-            logging.info(f"Generated {len(predictions)} predictions")
-            
-            # Scale predictions to [0, 1] range
-            if len(predictions) > 0:
-                predictions = (predictions - predictions.min()) / (predictions.max() - predictions.min())
-                logging.info(f"Scaled predictions range: [{predictions.min():.4f}, {predictions.max():.4f}]")
-            
-            # Calculate model confidence based on feature importance
-            if hasattr(model.rf_model, 'feature_importances_'):
-                confidence = np.mean(model.rf_model.feature_importances_)
-                logging.info(f"Model confidence: {confidence:.4f}")
-            else:
-                confidence = 0.5
-                logging.info("Using default confidence: 0.5")
-            
-            # Add predictions to data with weighted average based on confidence
-            data['ml_score'] = predictions
-            data['enhanced_score'] = (
-                confidence * data['ml_score'] +
-                (1 - confidence) * data['composite_score']
-            )
+                logger.warning(f"Error loading/using ML model: {str(e)}")
+                enhanced_data['ml_score'] = 0.0
         else:
-            logging.warning("No valid historical data for training")
-            data['ml_score'] = 0.0
-            data['enhanced_score'] = data['composite_score']
-            
-        return data
+            logger.warning("No ML model found")
+            enhanced_data['ml_score'] = 0.0
+        
+        # Calculate enhanced score
+        enhanced_data['enhanced_score'] = enhanced_data['composite_score']
+        
+        return enhanced_data
         
     except Exception as e:
-        logging.error(f"Error enhancing momentum signals: {str(e)}")
-        data['ml_score'] = 0.0
-        data['enhanced_score'] = data['composite_score']
-        return data 
+        logger.error(f"Error in enhance_signals: {str(e)}")
+        return momentum_data 

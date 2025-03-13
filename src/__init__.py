@@ -1,8 +1,5 @@
 """
-Quantitative Momentum Strategy Package
-
-This package implements a momentum-based trading strategy for S&P 500 stocks,
-combining traditional technical analysis with machine learning enhancements.
+Momentum trading strategy package.
 """
 
 __version__ = '1.0.0'

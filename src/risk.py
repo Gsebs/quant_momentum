@@ -164,47 +164,47 @@ def analyze_sector_exposure(momentum_df: pd.DataFrame, sector_data: Dict[str, st
         return pd.Series()
 
 def calculate_risk_metrics(data: pd.DataFrame) -> pd.DataFrame:
-    """
-    This is our risk dashboard - it calculates a bunch of risk metrics for each stock.
-    We look at:
-    1. Total and annualized returns
-    2. Volatility (how wild the stock is)
-    3. Risk-adjusted returns (Sharpe & Sortino ratios)
-    4. Maximum drawdown
-    
-    These metrics help us pick stocks that aren't just high-returning, but also safer.
-    """
+    """Calculate risk metrics for each stock."""
     try:
-        # Make a copy to be safe
-        result = data.copy()
+        # Create a copy to avoid modifying the original
+        risk_data = data.copy()
         
-        # Calculate the basic risk metrics
-        result['risk_total_return'] = result['returns']
-        result['risk_annualized_return'] = result['returns'] * 252  # Annualize
-        result['risk_annualized_volatility'] = result['volatility'] * np.sqrt(252)
+        # Calculate risk metrics
+        for ticker in risk_data.index:
+            try:
+                # Total return
+                risk_data.loc[ticker, 'risk_total_return'] = risk_data.loc[ticker, '12m_return']
+                
+                # Annualized return (already annualized)
+                risk_data.loc[ticker, 'risk_annualized_return'] = risk_data.loc[ticker, '12m_return']
+                
+                # Annualized volatility (already annualized)
+                risk_data.loc[ticker, 'risk_annualized_volatility'] = risk_data.loc[ticker, 'volatility']
+                
+                # Sharpe ratio (assuming 2% risk-free rate)
+                risk_free_rate = 0.02
+                excess_return = risk_data.loc[ticker, 'risk_annualized_return'] - risk_free_rate
+                if risk_data.loc[ticker, 'risk_annualized_volatility'] > 0:
+                    risk_data.loc[ticker, 'risk_sharpe_ratio'] = excess_return / risk_data.loc[ticker, 'risk_annualized_volatility']
+                else:
+                    risk_data.loc[ticker, 'risk_sharpe_ratio'] = 0.0
+                
+                # Sortino ratio (using downside deviation)
+                downside_returns = min(0, risk_data.loc[ticker, 'risk_annualized_return'] - risk_free_rate)
+                if downside_returns < 0:
+                    risk_data.loc[ticker, 'risk_sortino_ratio'] = excess_return / abs(downside_returns)
+                else:
+                    risk_data.loc[ticker, 'risk_sortino_ratio'] = risk_data.loc[ticker, 'risk_sharpe_ratio']
+                
+                # Maximum drawdown (using 12-month return as proxy)
+                risk_data.loc[ticker, 'risk_max_drawdown'] = min(0, risk_data.loc[ticker, '12m_return'])
+                
+            except Exception as e:
+                logger.error(f"Error calculating risk metrics for {ticker}: {str(e)}")
+                continue
         
-        # Sharpe ratio - returns per unit of risk
-        risk_free_rate = 0.02  # 2% risk-free rate
-        result['risk_sharpe_ratio'] = np.where(
-            result['risk_annualized_volatility'] != 0,
-            (result['risk_annualized_return'] - risk_free_rate) / result['risk_annualized_volatility'],
-            0
-        )
-        
-        # Sortino ratio - only considers downside risk
-        downside_returns = np.minimum(result['returns'], 0)
-        downside_volatility = np.sqrt(np.mean(np.square(downside_returns)))
-        result['risk_sortino_ratio'] = np.where(
-            downside_volatility != 0,
-            (result['risk_annualized_return'] - risk_free_rate) / (downside_volatility * np.sqrt(252)),
-            0
-        )
-        
-        # Maximum drawdown - biggest peak to trough loss
-        result['risk_max_drawdown'] = 0  # This is a placeholder - actual calc needs price history
-        
-        return result
+        return risk_data
         
     except Exception as e:
-        logging.error(f"Error calculating risk metrics: {str(e)}")
+        logger.error(f"Error in calculate_risk_metrics: {str(e)}")
         return data 

@@ -186,45 +186,17 @@ class MomentumDB:
     def store_momentum_metrics(self, momentum_df: pd.DataFrame) -> bool:
         """Store momentum metrics."""
         try:
-            # Prepare data for insertion
-            df = momentum_df.copy()
-            df['timestamp'] = datetime.now().strftime('%Y-%m-%d')
-            df.reset_index(inplace=True)
+            # Create data directory if it doesn't exist
+            os.makedirs('data', exist_ok=True)
             
-            # Map column names to database schema
-            column_mapping = {
-                'Ticker': 'ticker',
-                'Last_Price': 'last_price',
-                'Avg_Volume': 'avg_volume',
-                'composite_score': 'composite_score',
-                'ml_score': 'ml_score',
-                'enhanced_score': 'enhanced_score',
-                '1m_momentum': 'momentum_1m',
-                '3m_momentum': 'momentum_3m',
-                '6m_momentum': 'momentum_6m',
-                '12m_momentum': 'momentum_12m',
-                '1m_momentum_rank': 'momentum_1m_rank',
-                '3m_momentum_rank': 'momentum_3m_rank',
-                '6m_momentum_rank': 'momentum_6m_rank',
-                '12m_momentum_rank': 'momentum_12m_rank'
-            }
+            # Connect to database
+            conn = sqlite3.connect('data/momentum.db')
             
-            # Rename columns
-            df.rename(columns=column_mapping, inplace=True)
+            # Store data
+            momentum_df.to_sql('momentum_metrics', conn, if_exists='replace')
             
-            # Ensure all required columns exist
-            required_columns = ['ticker', 'timestamp', 'last_price', 'avg_volume', 'composite_score',
-                              'ml_score', 'enhanced_score', 'momentum_1m', 'momentum_3m', 'momentum_6m',
-                              'momentum_12m', 'momentum_1m_rank', 'momentum_3m_rank', 'momentum_6m_rank',
-                              'momentum_12m_rank']
-            
-            for col in required_columns:
-                if col not in df.columns:
-                    df[col] = None
-            
-            # Insert data
-            df.to_sql('momentum_metrics', self.conn, if_exists='append', index=False)
-            self.conn.commit()
+            # Close connection
+            conn.close()
             
             logger.info("Stored momentum metrics successfully")
             return True
@@ -291,4 +263,40 @@ class MomentumDB:
         try:
             self.conn.close()
         except:
-            pass 
+            pass
+
+def store_momentum_metrics(momentum_df: pd.DataFrame) -> None:
+    """Store momentum metrics in SQLite database."""
+    try:
+        # Create data directory if it doesn't exist
+        os.makedirs('data', exist_ok=True)
+        
+        # Connect to database
+        conn = sqlite3.connect('data/momentum.db')
+        
+        # Prepare data for insertion
+        df = momentum_df.copy()
+        df['timestamp'] = datetime.now().strftime('%Y-%m-%d')
+        
+        # If the index is named 'Ticker', use it as the ticker column
+        if df.index.name == 'Ticker':
+            df['ticker'] = df.index
+        elif 'Ticker' in df.columns:
+            df['ticker'] = df['Ticker']
+        
+        # Reset index after extracting ticker
+        df = df.reset_index(drop=True)
+        
+        # Store data
+        df.to_sql('momentum_metrics', conn, if_exists='replace')
+        
+        # Close connection
+        conn.close()
+        
+        logger.info("Stored momentum metrics successfully")
+        
+    except Exception as e:
+        logger.error(f"Error storing momentum metrics: {str(e)}")
+        raise
+
+__all__ = ['store_momentum_metrics'] 
