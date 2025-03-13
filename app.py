@@ -2,9 +2,10 @@ import os
 import sys
 import logging
 import pandas as pd
-from flask import Flask, jsonify, send_file
+from flask import Flask, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 from src.strategy import run_strategy
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -18,6 +19,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Create necessary directories on startup
+os.makedirs('data', exist_ok=True)
 os.makedirs('data/reports', exist_ok=True)
 os.makedirs('data/charts', exist_ok=True)
 
@@ -33,58 +35,62 @@ def initialize_data():
         logger.error(f"Error initializing data: {str(e)}", exc_info=True)
         raise
 
-@app.route('/api/momentum-signals')
+@app.route('/api/momentum-signals', methods=['GET'])
 def get_momentum_signals():
     try:
-        logger.info("Fetching momentum signals...")
+        # Run the strategy to generate fresh signals
+        logger.info("Running strategy to generate fresh signals...")
+        run_strategy()
+        
+        # Read the generated signals
         signals_file = 'data/momentum_signals.xlsx'
         if not os.path.exists(signals_file):
-            logger.info("Momentum signals file not found, generating data...")
-            run_strategy()
-            if not os.path.exists(signals_file):
-                logger.error("Failed to generate momentum signals file")
-                return jsonify({'error': 'Failed to generate momentum signals'}), 500
-        
+            return jsonify({'error': 'No momentum signals available'}), 404
+            
         df = pd.read_excel(signals_file)
-        logger.info("Successfully retrieved momentum signals")
-        return jsonify(df.to_dict(orient='records'))
+        
+        # Convert DataFrame to dict for JSON response
+        signals = df.to_dict(orient='records')
+        
+        return jsonify({
+            'signals': signals,
+            'generated_at': datetime.now().isoformat()
+        })
+        
     except Exception as e:
-        logger.error(f"Error fetching momentum signals: {str(e)}", exc_info=True)
+        logger.error(f"Error generating momentum signals: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/performance')
+@app.route('/api/performance', methods=['GET'])
 def get_performance():
     try:
-        logger.info("Fetching performance data...")
         report_file = 'data/reports/momentum_report.xlsx'
         if not os.path.exists(report_file):
-            logger.info("Performance report not found, generating data...")
-            run_strategy()
-            if not os.path.exists(report_file):
-                logger.error("Failed to generate performance report")
-                return jsonify({'error': 'Failed to generate performance report'}), 500
+            return jsonify({'error': 'Performance report not available'}), 404
             
         df = pd.read_excel(report_file)
-        logger.info("Successfully retrieved performance data")
-        return jsonify(df.to_dict(orient='records'))
+        performance = df.to_dict(orient='records')
+        
+        return jsonify({
+            'performance': performance,
+            'generated_at': datetime.now().isoformat()
+        })
+        
     except Exception as e:
-        logger.error(f"Error fetching performance data: {str(e)}", exc_info=True)
+        logger.error(f"Error retrieving performance data: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/charts/<filename>')
+@app.route('/api/charts/<filename>', methods=['GET'])
 def get_chart(filename):
     try:
-        logger.info(f"Fetching chart: {filename}")
-        chart_path = f'data/reports/{filename}'
-        if not os.path.exists(chart_path):
-            logger.error(f"Chart not found: {filename}")
-            return jsonify({'error': 'Chart not found'}), 404
-            
-        logger.info(f"Successfully retrieved chart: {filename}")
-        return send_file(chart_path, mimetype='image/png')
+        return send_from_directory('data/charts', filename)
     except Exception as e:
-        logger.error(f"Error fetching chart: {str(e)}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error retrieving chart {filename}: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Chart {filename} not found'}), 404
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

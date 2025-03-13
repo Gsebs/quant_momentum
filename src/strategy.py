@@ -41,6 +41,11 @@ from joblib import load
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Create necessary directories
+os.makedirs('data', exist_ok=True)
+os.makedirs('data/reports', exist_ok=True)
+os.makedirs('models', exist_ok=True)
+
 def get_date_str(date: datetime) -> str:
     """Just converts a date to YYYY-MM-DD format"""
     return date.strftime("%Y-%m-%d")
@@ -620,8 +625,8 @@ def load_sp500_data(start_date: str, end_date: str) -> pd.DataFrame:
     
     return combined_data
 
-def main():
-    """Main function to run the momentum strategy."""
+def run_strategy():
+    """Run the momentum strategy and generate necessary files."""
     try:
         # Set date range
         end_date = datetime.now()
@@ -638,9 +643,12 @@ def main():
         
         # Load ML model and enhance signals
         try:
-            model = load('models/momentum_model.joblib')
-            logger.info("Model loaded from models/momentum_model.joblib")
-            momentum_df = enhance_signals(momentum_df)
+            if os.path.exists('models/momentum_model.joblib'):
+                model = load('models/momentum_model.joblib')
+                logger.info("Model loaded from models/momentum_model.joblib")
+                momentum_df = enhance_signals(momentum_df)
+            else:
+                logger.warning("ML model not found, skipping signal enhancement")
         except Exception as e:
             logger.warning(f"Error loading/using ML model: {str(e)}")
         
@@ -651,13 +659,12 @@ def main():
         logger.info(f"Momentum DataFrame columns before storing: {risk_adjusted_data.columns.tolist()}")
         
         # Save trade recommendations
+        os.makedirs('data', exist_ok=True)
         risk_adjusted_data.to_excel('data/momentum_signals.xlsx')
         logger.info("Trade recommendations saved to data/momentum_signals.xlsx")
         
-        # Store momentum metrics in database
-        store_momentum_metrics(risk_adjusted_data)
-        
         # Generate report
+        os.makedirs('data/reports', exist_ok=True)
         generate_report(risk_adjusted_data, "data/reports/momentum_report.xlsx")
         
         # Run backtest
@@ -673,22 +680,22 @@ def main():
         
         # Print backtest results
         metrics = result.summary()
-        print("\nBacktest Results:")
-        print(f"Total Return: {metrics.get('total_return', 0):.2%}")
-        print(f"Annualized Return: {metrics.get('annualized_return', 0):.2%}")
-        print(f"Max Drawdown: {metrics.get('max_drawdown', 0):.2%}")
-        print(f"Average Turnover: {metrics.get('avg_turnover', 0):.2%}")
-        print(f"Number of Trades: {metrics.get('num_trades', 0)}")
+        logger.info("\nBacktest Results:")
+        logger.info(f"Total Return: {metrics.get('total_return', 0):.2%}")
+        logger.info(f"Annualized Return: {metrics.get('annualized_return', 0):.2%}")
+        logger.info(f"Max Drawdown: {metrics.get('max_drawdown', 0):.2%}")
+        logger.info(f"Average Turnover: {metrics.get('avg_turnover', 0):.2%}")
+        logger.info(f"Number of Trades: {metrics.get('num_trades', 0)}")
         
-        # Open report files automatically
-        logger.info("Opening report files...")
-        os.system("./open_reports.sh")
+        # Don't try to open files on Heroku
+        if not os.environ.get('DYNO'):
+            os.system("./open_reports.sh")
         
         logger.info("Strategy run completed!")
         
     except Exception as e:
-        logger.error(f"Error in main: {str(e)}")
+        logger.error(f"Error in run_strategy: {str(e)}", exc_info=True)
         raise
 
 if __name__ == '__main__':
-    main() 
+    run_strategy() 
