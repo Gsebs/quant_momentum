@@ -36,6 +36,8 @@ from . import reporting
 from . import backtest
 from . import db
 from joblib import load
+import concurrent.futures
+import requests.exceptions
 
 # Just basic logging setup to see what's happening
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +47,36 @@ logger = logging.getLogger(__name__)
 os.makedirs('data', exist_ok=True)
 os.makedirs('data/reports', exist_ok=True)
 os.makedirs('models', exist_ok=True)
+
+def get_stock_data(ticker: str, start_date: str, end_date: str, max_retries: int = 3, timeout: int = 5) -> Optional[pd.DataFrame]:
+    """
+    Get stock data with retries and timeout.
+    
+    Args:
+        ticker: Stock ticker symbol
+        start_date: Start date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format
+        max_retries: Maximum number of retry attempts
+        timeout: Timeout in seconds for each attempt
+        
+    Returns:
+        DataFrame with stock data or None if failed
+    """
+    for attempt in range(max_retries):
+        try:
+            stock = yf.Ticker(ticker)
+            data = stock.history(start=start_date, end=end_date, timeout=timeout)
+            if not data.empty:
+                return data
+        except (requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
+            if attempt == max_retries - 1:
+                logger.warning(f"Failed to get data for {ticker} after {max_retries} attempts: {str(e)}")
+            else:
+                time.sleep(1)  # Wait before retrying
+        except Exception as e:
+            logger.warning(f"Error getting data for {ticker}: {str(e)}")
+            break
+    return None
 
 def get_date_str(date: datetime) -> str:
     """Just converts a date to YYYY-MM-DD format"""
@@ -92,6 +124,9 @@ def compute_momentum(data: pd.DataFrame) -> Dict[str, float]:
         Dictionary with momentum metrics
     """
     try:
+        if data is None or data.empty:
+            return {}
+            
         momentum = {}
         
         # Calculate returns for different periods
@@ -184,6 +219,10 @@ def rank_stocks(momentum_data: List[Dict]) -> pd.DataFrame:
         # Turn our data into a DataFrame for easier ranking
         df = pd.DataFrame(momentum_data)
         
+        if df.empty:
+            logger.warning("No momentum data available for ranking")
+            return pd.DataFrame()
+            
         # Rank each momentum period separately
         momentum_cols = [col for col in df.columns if col.endswith('_momentum')]
         for col in momentum_cols:
@@ -236,6 +275,9 @@ def filter_universe(data: pd.DataFrame) -> bool:
     3. Not too volatile (< 50% annual volatility)
     """
     try:
+        if data is None or data.empty:
+            return False
+            
         # Get the latest price and volume
         last_price = float(data['Close'].tail(1).values[0])
         avg_volume = float(data['Volume'].rolling(window=20).mean().tail(1).values[0])
@@ -250,452 +292,83 @@ def filter_universe(data: pd.DataFrame) -> bool:
         volatility_ok = volatility < 0.5
         
         return price_ok and volume_ok and volatility_ok
-        
     except Exception as e:
-        logger.error(f"Error in filter_universe: {str(e)}")
+        logger.error(f"Error filtering universe: {str(e)}")
         return False
 
-def build_momentum_strategy(tickers: List[str], data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+def run_strategy() -> None:
     """
-    Build momentum strategy for a list of stocks.
-    
-    Args:
-        tickers: List of stock tickers
-        data_dict: Dictionary of stock data frames
-        
-    Returns:
-        DataFrame: Momentum metrics and ranks for all stocks
-    """
-    momentum_data = []
-    
-    # Define lookback periods (in trading days)
-    periods = {
-        '1m': 21,    # 1 month
-        '3m': 63,    # 3 months
-        '6m': 126,   # 6 months
-        '12m': 252  # 12 months
-    }
-    
-    for ticker in tickers:
-        try:
-            data = data_dict.get(ticker)
-            if data is None or data.empty:
-                continue
-                
-            # Check if stock passes universe filters
-            if not filter_universe(data):
-                continue
-            
-            # Compute momentum metrics and technical indicators
-            momentum = compute_momentum(data)
-            
-            if momentum:
-                momentum['Ticker'] = ticker
-                # Get the last price and average volume directly
-                momentum['Last_Price'] = float(data['Close'].tail(1).values[0])
-                momentum['Avg_Volume'] = float(data['Volume'].rolling(window=20).mean().tail(1).values[0])
-                momentum_data.append(momentum)
-                
-        except Exception as e:
-            logger.error(f"Error processing {ticker}: {str(e)}")
-            continue
-    
-    if not momentum_data:
-        logger.warning("No valid momentum data generated")
-        return pd.DataFrame()
-    
-    # Convert to DataFrame
-    momentum_df = pd.DataFrame(momentum_data)
-    
-    # Set Ticker as index
-    if 'Ticker' in momentum_df.columns:
-        momentum_df.set_index('Ticker', inplace=True)
-    
-    # Rank stocks with technical indicators
-    momentum_df = rank_stocks(momentum_df)
-    
-    # Enhance signals with ML model
-    momentum_df = enhance_signals(momentum_df)
-    
-    # Calculate position sizes
-    momentum_df = calculate_position_sizes(momentum_df)
-    
-    # Calculate risk metrics
-    momentum_df = calculate_risk_metrics(momentum_df)
-    
-    # Log columns before storing
-    logger.info(f"Momentum DataFrame columns before storing: {momentum_df.columns.tolist()}")
-    
-    return momentum_df
-
-def generate_trade_recommendations(momentum_df: pd.DataFrame, top_n: int = config.TOP_N_STOCKS, save_path: Optional[str] = None) -> pd.DataFrame:
-    """
-    Generate and optionally save trade recommendations.
-    
-    Args:
-        momentum_df: DataFrame with momentum metrics and ranks
-        top_n: Number of top stocks to recommend
-        save_path: Path to save recommendations (optional)
-        
-    Returns:
-        DataFrame: Trade recommendations
+    Run the momentum strategy:
+    1. Get universe of stocks
+    2. Calculate momentum metrics
+    3. Rank stocks
+    4. Generate signals and reports
     """
     try:
-        if momentum_df.empty:
-            logger.warning("No momentum data available for generating recommendations")
-            return pd.DataFrame()
+        # Get S&P 500 tickers
+        tickers = get_sp500_tickers()
+        if not tickers:
+            logger.error("Failed to get S&P 500 tickers")
+            return
+            
+        # Calculate lookback period
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=400)  # Get more than a year of data
         
-        # Select top N stocks
-        top_stocks = momentum_df.head(top_n)
+        # Get data and calculate momentum for each stock
+        momentum_data = []
+        stock_data = {}
         
-        # Prepare recommendations DataFrame
-        recommendations = pd.DataFrame({
-            'Ticker': top_stocks.index,
-            'Last_Price': top_stocks['Last_Price'],
-            'Position_Size': top_stocks['position_size'],
-            'Momentum_Score': top_stocks['composite_score'],
-            'ML_Score': top_stocks.get('ml_score', 0),
-            'Enhanced_Score': top_stocks.get('enhanced_score', top_stocks['composite_score']),
-            'Sharpe_Ratio': top_stocks['risk_sharpe_ratio'],
-            'Max_Drawdown': top_stocks['risk_max_drawdown'],
-            '1M_Return': top_stocks['1m_return'],
-            '3M_Return': top_stocks['3m_return'],
-            '6M_Return': top_stocks['6m_return'],
-            '12M_Return': top_stocks['12m_return'],
-            'Volatility': top_stocks['volatility'],
-            'Avg_Volume': top_stocks['Avg_Volume']
-        })
-        
-        # Format percentage columns
-        pct_columns = ['Momentum_Score', 'ML_Score', 'Enhanced_Score', 'Max_Drawdown',
-                      '1M_Return', '3M_Return', '6M_Return', '12M_Return', 'Volatility']
-        for col in pct_columns:
-            recommendations[col] = recommendations[col].map('{:.2%}'.format)
-        
-        # Format other columns
-        recommendations['Last_Price'] = recommendations['Last_Price'].map('${:.2f}'.format)
-        recommendations['Position_Size'] = recommendations['Position_Size'].map('${:,.0f}'.format)
-        recommendations['Avg_Volume'] = recommendations['Avg_Volume'].map('{:,.0f}'.format)
-        recommendations['Sharpe_Ratio'] = recommendations['Sharpe_Ratio'].map('{:.2f}'.format)
-        
-        # Save recommendations if path provided
-        if save_path:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            recommendations.to_excel(save_path, index=False)
-            logger.info(f"Trade recommendations saved to {save_path}")
-        
-        return recommendations
-    except Exception as e:
-        logger.error(f"Error generating recommendations: {str(e)}")
-        return pd.DataFrame()
-
-class MomentumStrategy:
-    """Momentum trading strategy implementation."""
-    
-    def __init__(self):
-        """Initialize the momentum strategy."""
-        self.setup_logging()
-        
-    def setup_logging(self):
-        """Set up logging configuration."""
-        logging.basicConfig(
-            level=config.LOG_LEVEL,
-            format=config.LOG_FORMAT
-        )
-
-    def run(self):
-        """Run the momentum strategy."""
-        try:
-            # Get S&P 500 tickers
-            tickers = pd.read_csv(os.path.join(config.DATA_DIR, 'sp500.csv'))['Symbol'].tolist()
-            
-            # Calculate momentum signals for each ticker
-            signals = []
-            for ticker in tickers:
-                try:
-                    ticker_signals = self._calculate_momentum_signals(ticker)
-                    if ticker_signals is not None:
-                        signals.append(ticker_signals)
-                except Exception as e:
-                    logging.error(f"Error processing ticker {ticker}: {str(e)}")
-                    continue
-            
-            if not signals:
-                logging.warning("No valid momentum signals generated")
-                return pd.DataFrame()
-            
-            # Combine signals into a DataFrame
-            signals = pd.concat(signals, axis=0)
-            
-            # Rank stocks based on momentum
-            signals = signals.sort_values('composite_score', ascending=False)
-            
-            # Save signals to Excel using absolute path
-            signals.to_excel(config.SIGNALS_FILE)
-            logging.info(f"Saved signals for {len(signals)} tickers to Excel")
-            
-            return signals
-            
-        except Exception as e:
-            logging.error(f"Error running momentum strategy: {str(e)}")
-            raise
-
-    def _download_data(self, ticker: str) -> pd.DataFrame:
-        """Download historical data for the given ticker."""
-        try:
-            stock = yf.download(ticker, start='2020-01-01', progress=True)
-            if not stock.empty:
-                return stock
-            else:
-                logger.warning(f"No data available for {ticker}")
-                return None
-        except Exception as e:
-            logger.error(f"Error downloading data for {ticker}: {str(e)}")
-            return None
-
-    def calculate_return(self, data, periods):
-        """
-        Calculate the return over a specified period.
-        
-        Args:
-            data (pd.DataFrame): DataFrame containing price data
-            periods (int): Number of periods to calculate return over
-            
-        Returns:
-            pd.Series: Series containing returns
-        """
-        return data['Close'].pct_change(periods=periods)
-
-    def _calculate_momentum_signals(self, ticker: str) -> pd.DataFrame:
-        """
-        Calculate momentum signals for a given stock.
-        
-        Args:
-            ticker (str): Ticker symbol of the stock
-            
-        Returns:
-            pd.DataFrame: DataFrame containing momentum signals
-        """
-        try:
-            # Download data for the stock
-            data = yf.download(ticker, start=config.START_DATE, progress=False)
-            if data.empty:
-                logging.warning(f"No data available for {ticker}")
-                return None
-            
-            logging.info(f"Downloaded {len(data)} rows of data for {ticker}")
-            
-            # Calculate returns for different periods
-            returns_1m = self.calculate_return(data, periods=21)  # 1 month
-            returns_3m = self.calculate_return(data, periods=63)  # 3 months
-            returns_6m = self.calculate_return(data, periods=126)  # 6 months
-            returns_12m = self.calculate_return(data, periods=252)  # 12 months
-            
-            # Calculate volatility using a rolling window
-            volatility = data['Close'].pct_change().rolling(window=252).std()
-            
-            # Calculate RSI
-            delta = data['Close'].diff()
-            gains = delta.where(delta > 0, 0)
-            losses = -delta.where(delta < 0, 0)
-            avg_gain = gains.rolling(window=14).mean()
-            avg_loss = losses.rolling(window=14).mean()
-            rs = avg_gain / avg_loss
-            rsi = 100 - (100 / (1 + rs))
-            
-            # Calculate trend strength
-            sma_50 = data['Close'].rolling(window=50).mean()
-            sma_200 = data['Close'].rolling(window=200).mean()
-            trend_strength = (sma_50 - sma_200) / sma_200
-            
-            # Get the latest values
-            returns_dict = {
-                '1M': float(returns_1m.iloc[-1]),
-                '3M': float(returns_3m.iloc[-1]),
-                '6M': float(returns_6m.iloc[-1]),
-                '12M': float(returns_12m.iloc[-1])
+        # Use ThreadPoolExecutor for parallel data fetching
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_ticker = {
+                executor.submit(
+                    get_stock_data, 
+                    ticker, 
+                    get_date_str(start_date), 
+                    get_date_str(end_date)
+                ): ticker for ticker in tickers
             }
             
-            # Get latest volatility, RSI and trend strength
-            latest_volatility = float(volatility.iloc[-1])
-            latest_rsi = float(rsi.iloc[-1])
-            latest_trend = float(trend_strength.iloc[-1])
-            
-            # Log the latest values for debugging
-            logging.info(f"Latest returns: 1M={returns_1m.iloc[-1:]}, 3M={returns_3m.iloc[-1:]}, 6M={returns_6m.iloc[-1:]}, 12M={returns_12m.iloc[-1:]}")
-            logging.info(f"Latest volatility: {volatility.iloc[-1:]}")
-            logging.info(f"Latest RSI: {rsi.iloc[-1:]}")
-            logging.info(f"Latest trend strength: {trend_strength.iloc[-1:]}")
-            
-            # Calculate momentum score using weighted returns
-            momentum_score = (
-                returns_dict['1M'] * config.MOMENTUM_WEIGHTS['1M'] +
-                returns_dict['3M'] * config.MOMENTUM_WEIGHTS['3M'] +
-                returns_dict['6M'] * config.MOMENTUM_WEIGHTS['6M'] +
-                returns_dict['12M'] * config.MOMENTUM_WEIGHTS['12M']
-            )
-            
-            # Scale momentum score to a reasonable range (-1 to 1)
-            momentum_score = np.clip(momentum_score, -1, 1)
-            
-            # Calculate volatility adjustment (-0.25 to 0)
-            volatility_adjustment = -0.25 * (latest_volatility / np.nanmean(volatility))
-            volatility_adjustment = np.clip(volatility_adjustment, -0.25, 0)
-            
-            # Calculate trend adjustment (-0.25 to 0.25)
-            if not pd.isna(latest_trend):
-                if latest_trend > 0.05:  # Strong uptrend
-                    trend_adjustment = 0.25
-                elif latest_trend < -0.05:  # Strong downtrend
-                    trend_adjustment = -0.25
-                else:
-                    trend_adjustment = latest_trend * 5  # Scale trend to -0.25 to 0.25
-            else:
-                trend_adjustment = 0
-            
-            # Calculate composite score (range: -1.5 to 1.5)
-            composite_score = momentum_score + volatility_adjustment + trend_adjustment
-            
-            # Calculate position size (0 to MAX_POSITION_SIZE)
-            # Start with a base position of 25% of max
-            base_position = config.MAX_POSITION_SIZE * 0.25
-            
-            # Scale position size based on composite score
-            if composite_score > 0:
-                # For positive scores, scale up from base position
-                position_size = base_position * (1 + composite_score)
-            else:
-                # For negative scores, scale down from base position
-                position_size = base_position * (1 + composite_score)
-            
-            # Ensure position size stays within limits
-            position_size = np.clip(position_size, 0, config.MAX_POSITION_SIZE)
-            
-            # Create signals DataFrame with ticker as index
-            signals = pd.DataFrame({
-                'momentum_score': [momentum_score],
-                'volatility': [latest_volatility],
-                'trend_strength': [latest_trend],
-                'composite_score': [composite_score],
-                'position_size': [position_size]
-            }, index=[ticker])
-            
-            logging.info(f"Successfully calculated signals for {ticker}")
-            return signals
-            
-        except Exception as e:
-            logging.error(f"Error calculating signals for {ticker}: {str(e)}")
-            return None
-
-def load_sp500_data(start_date: str, end_date: str) -> pd.DataFrame:
-    """
-    Load historical data for S&P 500 stocks.
-    
-    Args:
-        start_date (str): Start date in YYYY-MM-DD format
-        end_date (str): End date in YYYY-MM-DD format
+            for future in concurrent.futures.as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                try:
+                    data = future.result()
+                    if data is not None and not data.empty and filter_universe(data):
+                        stock_data[ticker] = data
+                        metrics = compute_momentum(data)
+                        if metrics:
+                            metrics['ticker'] = ticker
+                            momentum_data.append(metrics)
+                except Exception as e:
+                    logger.error(f"Error processing {ticker}: {str(e)}")
         
-    Returns:
-        pd.DataFrame: DataFrame with historical price data
-    """
-    all_data = {}
-    
-    for ticker in get_sp500_tickers():
-        try:
-            stock = yf.Ticker(ticker)
-            hist = stock.history(start=start_date, end=end_date)
+        if not momentum_data:
+            logger.error("No valid momentum data calculated")
+            return
             
-            if not hist.empty:
-                hist['Ticker'] = ticker
-                all_data[ticker] = hist
-                logger.info(f"Downloaded data for {ticker}")
-            else:
-                logger.warning(f"No data available for {ticker}")
-                
-        except Exception as e:
-            logger.error(f"Error downloading data for {ticker}: {str(e)}")
-            continue
-    
-    if not all_data:
-        raise ValueError("No data was downloaded for any stock")
-    
-    # Combine all data into a single DataFrame
-    combined_data = pd.concat(all_data.values(), axis=0)
-    combined_data = combined_data.reset_index()
-    
-    return combined_data
-
-def run_strategy():
-    """Run the momentum strategy and generate necessary files."""
-    try:
-        # Set date range
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=365)
+        # Rank stocks
+        ranked_stocks = rank_stocks(momentum_data)
+        if ranked_stocks.empty:
+            logger.error("Failed to rank stocks")
+            return
+            
+        # Sort by composite score and get top stocks
+        ranked_stocks = ranked_stocks.sort_values('composite_score', ascending=False)
+        top_stocks = ranked_stocks.head(config.TOP_N_STOCKS)
         
-        # Load historical data
-        historical_data = load_sp500_data(
-            start_date=start_date.strftime('%Y-%m-%d'),
-            end_date=end_date.strftime('%Y-%m-%d')
-        )
+        # Save signals to Excel
+        signals_file = 'data/momentum_signals.xlsx'
+        top_stocks.to_excel(signals_file, index=False)
+        logger.info(f"Saved momentum signals to {signals_file}")
         
-        # Calculate momentum metrics
-        momentum_df = calculate_momentum_metrics(historical_data)
-        
-        # Load ML model and enhance signals
-        try:
-            if os.path.exists('models/momentum_model.joblib'):
-                model = load('models/momentum_model.joblib')
-                logger.info("Model loaded from models/momentum_model.joblib")
-                momentum_df = enhance_signals(momentum_df)
-            else:
-                logger.warning("ML model not found, skipping signal enhancement")
-        except Exception as e:
-            logger.warning(f"Error loading/using ML model: {str(e)}")
-        
-        # Calculate risk metrics
-        risk_adjusted_data = momentum_df.copy()
-        
-        # Log DataFrame columns before storing
-        logger.info(f"Momentum DataFrame columns before storing: {risk_adjusted_data.columns.tolist()}")
-        
-        # Save trade recommendations
-        os.makedirs('data', exist_ok=True)
-        risk_adjusted_data.to_excel('data/momentum_signals.xlsx')
-        logger.info("Trade recommendations saved to data/momentum_signals.xlsx")
-        
-        # Generate report
-        os.makedirs('data/reports', exist_ok=True)
-        generate_report(risk_adjusted_data, "data/reports/momentum_report.xlsx")
-        
-        # Run backtest
-        backtest = BacktestResult()
-        result = run_backtest_from_recommendations(
-            recommendations_file='data/momentum_signals.xlsx',
-            start_date=start_date.strftime('%Y-%m-%d'),
-            end_date=end_date.strftime('%Y-%m-%d'),
-            top_n=10,
-            initial_capital=100000
-        )
-        result.plot_performance()
-        
-        # Print backtest results
-        metrics = result.summary()
-        logger.info("\nBacktest Results:")
-        logger.info(f"Total Return: {metrics.get('total_return', 0):.2%}")
-        logger.info(f"Annualized Return: {metrics.get('annualized_return', 0):.2%}")
-        logger.info(f"Max Drawdown: {metrics.get('max_drawdown', 0):.2%}")
-        logger.info(f"Average Turnover: {metrics.get('avg_turnover', 0):.2%}")
-        logger.info(f"Number of Trades: {metrics.get('num_trades', 0)}")
-        
-        # Don't try to open files on Heroku
-        if not os.environ.get('DYNO'):
-            os.system("./open_reports.sh")
-        
-        logger.info("Strategy run completed!")
+        # Generate performance report
+        report_file = 'data/reports/momentum_report.xlsx'
+        generate_report(top_stocks, stock_data, report_file)
+        logger.info(f"Generated performance report at {report_file}")
         
     except Exception as e:
-        logger.error(f"Error in run_strategy: {str(e)}", exc_info=True)
-        raise
+        logger.error(f"Error running strategy: {str(e)}")
 
 if __name__ == '__main__':
     run_strategy() 
