@@ -26,7 +26,7 @@ from src.reporting import generate_report
 from src.indicators import calculate_momentum_indicators, calculate_rsi, calculate_macd
 from src.risk import calculate_risk_metrics, calculate_position_sizes, analyze_sector_exposure
 from src.backtest import MomentumBacktest, backtest_strategy, BacktestResult, run_backtest_from_recommendations
-from src.data import get_sp500_tickers
+from src.data import get_sp500_tickers, get_batch_data, validate_stock_data
 from src.momentum import calculate_momentum_metrics
 import time
 from . import momentum
@@ -354,47 +354,32 @@ def run_strategy() -> None:
         test_mode = os.environ.get('TEST_MODE', 'false').lower() == 'true'
         if test_mode:
             logger.info("Running in test mode with reduced ticker set")
-            tickers = tickers[:50]  # Start with 50 stocks for testing
+            tickers = tickers[:15]  # Start with 15 stocks for testing
             
         # Calculate lookback period
         end_date = datetime.now()
         start_date = end_date - timedelta(days=400)  # Get more than a year of data
         
-        # Get data and calculate momentum for each stock
-        momentum_data = []
-        stock_data = {}
+        # Get data in batches
+        stock_data = get_batch_data(
+            tickers,
+            get_date_str(start_date),
+            get_date_str(end_date),
+            batch_size=3,  # Small batches to avoid rate limits
+            delay=3  # 3 second delay between batches
+        )
         
-        # Use ThreadPoolExecutor for parallel data fetching with limited concurrency
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_ticker = {
-                executor.submit(
-                    get_stock_data, 
-                    ticker, 
-                    get_date_str(start_date), 
-                    get_date_str(end_date)
-                ): ticker for ticker in tickers
-            }
-            
-            completed = 0
-            total = len(tickers)
-            
-            for future in concurrent.futures.as_completed(future_to_ticker):
-                ticker = future_to_ticker[future]
-                try:
-                    data = future.result()
-                    completed += 1
-                    
-                    if completed % 10 == 0:
-                        logger.info(f"Processed {completed}/{total} stocks")
-                        
-                    if data is not None and not data.empty and filter_universe(data):
-                        stock_data[ticker] = data
-                        metrics = compute_momentum(data)
-                        if metrics:
-                            metrics['ticker'] = ticker
-                            momentum_data.append(metrics)
-                except Exception as e:
-                    logger.error(f"Error processing {ticker}: {str(e)}")
+        # Calculate momentum for stocks with valid data
+        momentum_data = []
+        for ticker, data in stock_data.items():
+            try:
+                if validate_stock_data(data):
+                    metrics = compute_momentum(data)
+                    if metrics:
+                        metrics['ticker'] = ticker
+                        momentum_data.append(metrics)
+            except Exception as e:
+                logger.error(f"Error processing {ticker}: {str(e)}")
         
         if not momentum_data:
             logger.error("No valid momentum data calculated")
