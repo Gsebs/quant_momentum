@@ -49,11 +49,24 @@ RELIABLE_TICKERS = [
 
 # Global rate limiter
 last_request_time = {}
-MIN_REQUEST_INTERVAL = 1.0  # seconds between requests per ticker
+MIN_REQUEST_INTERVAL = 2.0  # seconds between requests per ticker
+MAX_RETRIES = 5
+BASE_DELAY = 3.0  # base delay for exponential backoff
+MAX_DELAY = 60.0  # maximum delay between retries
 
-# User agent headers
+# User agent headers with more realistic browser info
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Cache-Control': 'max-age=0'
 }
 
 def get_sp500_tickers() -> List[str]:
@@ -125,21 +138,27 @@ def get_stock_data_sync(ticker: str) -> Optional[pd.DataFrame]:
 
         # Create a session with robust headers
         session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0'
-        })
+        session.headers.update(HEADERS)
         
-        # Get historical data with retries
-        max_retries = 3
-        retry_delay = 2
-        
-        for attempt in range(max_retries):
+        # Get historical data with retries and exponential backoff
+        for attempt in range(MAX_RETRIES):
             try:
+                # Add jitter to avoid synchronized requests
+                jitter = random.uniform(0.1, 1.0)
+                delay = min(BASE_DELAY * (2 ** attempt) + jitter, MAX_DELAY)
+                
+                if attempt > 0:
+                    logger.info(f"Waiting {delay:.2f} seconds before retry {attempt + 1} for {ticker}")
+                    time.sleep(delay)
+                
+                # Enforce rate limiting
+                current_time = time.time()
+                if ticker in last_request_time:
+                    elapsed = current_time - last_request_time[ticker]
+                    if elapsed < MIN_REQUEST_INTERVAL:
+                        time.sleep(MIN_REQUEST_INTERVAL - elapsed + jitter)
+                last_request_time[ticker] = time.time()
+                
                 # Create a new Ticker object for each attempt
                 stock = yf.Ticker(ticker, session=session)
                 
@@ -175,12 +194,21 @@ def get_stock_data_sync(ticker: str) -> Optional[pd.DataFrame]:
                     logger.error(f"Invalid data received for {ticker}")
                     return None
                 
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"Attempt {attempt + 1} failed for {ticker}: {str(e)}")
-                    time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+            except requests.exceptions.HTTPError as e:
+                if "429" in str(e):
+                    logger.warning(f"Rate limit hit for {ticker} on attempt {attempt + 1}")
+                    if attempt == MAX_RETRIES - 1:
+                        logger.error(f"Max retries reached for {ticker} due to rate limiting")
+                        return None
+                    continue
                 else:
-                    logger.error(f"Failed to get data for {ticker} after {max_retries} attempts: {str(e)}")
+                    logger.error(f"HTTP error for {ticker}: {str(e)}")
+                    return None
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning(f"Attempt {attempt + 1} failed for {ticker}: {str(e)}")
+                else:
+                    logger.error(f"Failed to get data for {ticker} after {MAX_RETRIES} attempts: {str(e)}")
                     return None
                     
     except Exception as e:
@@ -190,16 +218,30 @@ def get_stock_data_sync(ticker: str) -> Optional[pd.DataFrame]:
 def get_batch_data(tickers: List[str]) -> Dict[str, pd.DataFrame]:
     """Get historical data for multiple stocks."""
     try:
-        # Process tickers sequentially to avoid rate limits
+        # Process tickers sequentially with proper delays
         results = {}
-        for ticker in tickers:
+        for i, ticker in enumerate(tickers):
             try:
-                # Add delay between requests
-                time.sleep(MIN_REQUEST_INTERVAL)
+                # Add delay between requests with jitter
+                if i > 0:  # Don't delay first request
+                    jitter = random.uniform(0.5, 1.5)
+                    delay = MIN_REQUEST_INTERVAL * jitter
+                    logger.info(f"Waiting {delay:.2f} seconds before processing {ticker}")
+                    time.sleep(delay)
                 
                 data = get_stock_data_sync(ticker)
                 if data is not None:
                     results[ticker] = data
+                    logger.info(f"Successfully retrieved data for {ticker} ({i + 1}/{len(tickers)})")
+                else:
+                    logger.warning(f"No data retrieved for {ticker} ({i + 1}/{len(tickers)})")
+                
+                # Add longer delay after every 10 requests to avoid rate limits
+                if (i + 1) % 10 == 0:
+                    delay = random.uniform(10, 15)
+                    logger.info(f"Taking a longer break of {delay:.2f} seconds after processing {i + 1} tickers")
+                    time.sleep(delay)
+                    
             except Exception as e:
                 logger.error(f"Error getting data for {ticker}: {str(e)}")
                 continue
@@ -262,19 +304,63 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
         if cached:
             return cached['data']
             
-        # Get fresh data with headers
+        # Get fresh data with improved rate limiting
         session = requests.Session()
         session.headers.update(HEADERS)
-        spy = yf.Ticker('SPY', session=session)
-        data = spy.history(start=start_date, end=end_date)
         
-        if data.empty:
-            logger.warning("No market data available")
-            return pd.DataFrame()
-            
-        # Save to cache
-        save_to_cache('SPY', data)
-        return data
+        for attempt in range(MAX_RETRIES):
+            try:
+                # Add jitter to avoid synchronized requests
+                jitter = random.uniform(0.1, 1.0)
+                delay = min(BASE_DELAY * (2 ** attempt) + jitter, MAX_DELAY)
+                
+                if attempt > 0:
+                    logger.info(f"Waiting {delay:.2f} seconds before retry {attempt + 1} for SPY")
+                    time.sleep(delay)
+                
+                # Enforce rate limiting
+                current_time = time.time()
+                if 'SPY' in last_request_time:
+                    elapsed = current_time - last_request_time['SPY']
+                    if elapsed < MIN_REQUEST_INTERVAL:
+                        time.sleep(MIN_REQUEST_INTERVAL - elapsed + jitter)
+                last_request_time['SPY'] = time.time()
+                
+                spy = yf.Ticker('SPY', session=session)
+                data = spy.history(
+                    start=start_date,
+                    end=end_date,
+                    interval='1d',
+                    auto_adjust=True,
+                    timeout=30
+                )
+                
+                if data.empty:
+                    logger.warning("No market data available")
+                    if attempt < MAX_RETRIES - 1:
+                        continue
+                    return pd.DataFrame()
+                
+                # Save to cache
+                save_to_cache('SPY', data)
+                return data
+                
+            except requests.exceptions.HTTPError as e:
+                if "429" in str(e):
+                    logger.warning(f"Rate limit hit for SPY on attempt {attempt + 1}")
+                    if attempt == MAX_RETRIES - 1:
+                        logger.error("Max retries reached for SPY due to rate limiting")
+                        return pd.DataFrame()
+                    continue
+                else:
+                    logger.error(f"HTTP error for SPY: {str(e)}")
+                    return pd.DataFrame()
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning(f"Attempt {attempt + 1} failed for SPY: {str(e)}")
+                else:
+                    logger.error(f"Failed to get SPY data after {MAX_RETRIES} attempts: {str(e)}")
+                    return pd.DataFrame()
         
     except Exception as e:
         logger.error(f"Error getting market data: {str(e)}")
