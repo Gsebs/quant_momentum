@@ -35,16 +35,18 @@ logger = logging.getLogger(__name__)
 # Create cache directory if it doesn't exist
 Path("data/cache").mkdir(parents=True, exist_ok=True)
 
-RELIABLE_TICKERS = [
-    'AAPL',  # Apple
-    'MSFT',  # Microsoft
-    'GOOGL'  # Alphabet (Google)
-]
+# Constants for rate limiting
+MIN_DELAY = 2.0  # Minimum delay between requests
+MAX_DELAY = 5.0  # Maximum delay between requests
+MAX_RETRIES = 3  # Maximum number of retries per request
+BATCH_SIZE = 3   # Number of tickers to process in each batch
+
+# Test mode tickers (reduced set for development)
+RELIABLE_TICKERS = ['AAPL', 'MSFT', 'GOOGL']
 
 # Global rate limiter
 last_request_time = {}
 MIN_REQUEST_INTERVAL = 5.0  # seconds between requests per ticker
-MAX_RETRIES = 3  # reduced retries due to Heroku timeout
 BASE_DELAY = 10.0  # increased base delay for exponential backoff
 MAX_DELAY = 20.0  # reduced max delay due to Heroku timeout
 CACHE_DURATION = timedelta(hours=12)  # increased cache duration
@@ -375,7 +377,7 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
         return pd.DataFrame()
 
 @redis_cache(expire_time=21600)  # Cache for 6 hours
-async def get_stock_data(ticker, period="1y"):
+def get_stock_data(ticker, period="1y"):
     """
     Fetch stock data for a given ticker with caching and rate limiting.
     """
@@ -411,7 +413,7 @@ async def get_stock_data(ticker, period="1y"):
             if attempt == MAX_RETRIES - 1:
                 raise
 
-async def get_batch_data(tickers):
+def get_batch_data(tickers):
     """
     Process tickers in batches with rate limiting.
     """
@@ -428,7 +430,7 @@ async def get_batch_data(tickers):
         # Process each ticker in the batch
         for ticker in batch:
             try:
-                data = await get_stock_data(ticker)
+                data = get_stock_data(ticker)
                 results.append(data)
             except Exception as e:
                 logger.error(f"Error processing {ticker}: {str(e)}")

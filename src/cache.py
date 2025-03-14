@@ -29,7 +29,7 @@ def redis_cache(expire_time=3600):
     """Redis caching decorator with expiration time in seconds."""
     def decorator(func):
         @wraps(func)
-        async def wrapper(*args, **kwargs):
+        def wrapper(*args, **kwargs):
             key = f"{func.__name__}:{cache_key(*args, **kwargs)}"
             
             try:
@@ -40,14 +40,14 @@ def redis_cache(expire_time=3600):
                     return json.loads(cached_result)
                 
                 # If not in cache, execute function and cache result
-                result = await func(*args, **kwargs)
+                result = func(*args, **kwargs)
                 redis_client.setex(key, expire_time, json.dumps(result))
                 logger.info(f"Cache miss for {key}, stored new result")
                 return result
                 
             except redis.RedisError as e:
                 logger.warning(f"Redis error: {str(e)}, falling back to direct execution")
-                return await func(*args, **kwargs)
+                return func(*args, **kwargs)
                 
             except Exception as e:
                 logger.error(f"Unexpected error in cache layer: {str(e)}")
