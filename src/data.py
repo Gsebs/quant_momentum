@@ -37,22 +37,16 @@ Path("data/cache").mkdir(parents=True, exist_ok=True)
 RELIABLE_TICKERS = [
     'AAPL',  # Apple
     'MSFT',  # Microsoft
-    'GOOGL', # Alphabet (Google)
-    'AMZN',  # Amazon
-    'META',  # Meta (Facebook)
-    'NVDA',  # NVIDIA
-    'TSLA',  # Tesla
-    'JPM',   # JPMorgan Chase
-    'V',     # Visa
-    'WMT'    # Walmart
+    'GOOGL'  # Alphabet (Google)
 ]
 
 # Global rate limiter
 last_request_time = {}
-MIN_REQUEST_INTERVAL = 2.0  # seconds between requests per ticker
-MAX_RETRIES = 5
-BASE_DELAY = 3.0  # base delay for exponential backoff
-MAX_DELAY = 60.0  # maximum delay between retries
+MIN_REQUEST_INTERVAL = 5.0  # seconds between requests per ticker
+MAX_RETRIES = 3  # reduced retries due to Heroku timeout
+BASE_DELAY = 10.0  # increased base delay for exponential backoff
+MAX_DELAY = 20.0  # reduced max delay due to Heroku timeout
+CACHE_DURATION = timedelta(hours=12)  # increased cache duration
 
 # User agent headers with more realistic browser info
 HEADERS = {
@@ -66,7 +60,11 @@ HEADERS = {
     'Sec-Fetch-Mode': 'navigate',
     'Sec-Fetch-Site': 'none',
     'Sec-Fetch-User': '?1',
-    'Cache-Control': 'max-age=0'
+    'Cache-Control': 'max-age=0',
+    'DNT': '1',
+    'Sec-CH-UA': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+    'Sec-CH-UA-Mobile': '?0',
+    'Sec-CH-UA-Platform': '"Windows"'
 }
 
 def get_sp500_tickers() -> List[str]:
@@ -97,9 +95,12 @@ def get_cached_data(ticker: str) -> Optional[Dict[str, Any]]:
             with open(cache_file, 'rb') as f:
                 cached_data = pickle.load(f)
                 cache_date = cached_data.get('date')
-                # Cache is valid for 4 hours
-                if cache_date and datetime.now() - cache_date < timedelta(hours=4):
+                # Cache is valid for CACHE_DURATION
+                if cache_date and datetime.now() - cache_date < CACHE_DURATION:
+                    logger.info(f"Using cached data for {ticker} from {cache_date}")
                     return cached_data
+                else:
+                    logger.info(f"Cache expired for {ticker}, last updated {cache_date}")
         except Exception as e:
             logger.warning(f"Error reading cache for {ticker}: {str(e)}")
     return None
@@ -218,33 +219,39 @@ def get_stock_data_sync(ticker: str) -> Optional[pd.DataFrame]:
 def get_batch_data(tickers: List[str]) -> Dict[str, pd.DataFrame]:
     """Get historical data for multiple stocks."""
     try:
-        # Process tickers sequentially with proper delays
+        # Process tickers in smaller batches
         results = {}
-        for i, ticker in enumerate(tickers):
-            try:
-                # Add delay between requests with jitter
-                if i > 0:  # Don't delay first request
-                    jitter = random.uniform(0.5, 1.5)
-                    delay = MIN_REQUEST_INTERVAL * jitter
-                    logger.info(f"Waiting {delay:.2f} seconds before processing {ticker}")
-                    time.sleep(delay)
-                
-                data = get_stock_data_sync(ticker)
-                if data is not None:
-                    results[ticker] = data
-                    logger.info(f"Successfully retrieved data for {ticker} ({i + 1}/{len(tickers)})")
-                else:
-                    logger.warning(f"No data retrieved for {ticker} ({i + 1}/{len(tickers)})")
-                
-                # Add longer delay after every 10 requests to avoid rate limits
-                if (i + 1) % 10 == 0:
-                    delay = random.uniform(10, 15)
-                    logger.info(f"Taking a longer break of {delay:.2f} seconds after processing {i + 1} tickers")
-                    time.sleep(delay)
+        batch_size = 3  # Process only 3 stocks at a time
+        
+        for i in range(0, len(tickers), batch_size):
+            batch = tickers[i:i + batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1} of {(len(tickers) + batch_size - 1)//batch_size}")
+            
+            for j, ticker in enumerate(batch):
+                try:
+                    # Add delay between requests with jitter
+                    if j > 0:  # Don't delay first request in batch
+                        jitter = random.uniform(1.0, 2.0)
+                        delay = MIN_REQUEST_INTERVAL * jitter
+                        logger.info(f"Waiting {delay:.2f} seconds before processing {ticker}")
+                        time.sleep(delay)
                     
-            except Exception as e:
-                logger.error(f"Error getting data for {ticker}: {str(e)}")
-                continue
+                    data = get_stock_data_sync(ticker)
+                    if data is not None:
+                        results[ticker] = data
+                        logger.info(f"Successfully retrieved data for {ticker} ({i + j + 1}/{len(tickers)})")
+                    else:
+                        logger.warning(f"No data retrieved for {ticker} ({i + j + 1}/{len(tickers)})")
+                    
+                except Exception as e:
+                    logger.error(f"Error getting data for {ticker}: {str(e)}")
+                    continue
+            
+            # Add longer delay between batches
+            if i + batch_size < len(tickers):
+                delay = random.uniform(15, 20)
+                logger.info(f"Taking a longer break of {delay:.2f} seconds after processing batch {i//batch_size + 1}")
+                time.sleep(delay)
         
         return results
         
