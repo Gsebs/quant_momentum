@@ -19,7 +19,7 @@ import requests
 import logging
 import bs4 as bs
 import yfinance as yf
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import time
 from datetime import datetime, timedelta
 import pickle
@@ -27,8 +27,12 @@ import random
 import asyncio
 import aiohttp
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Create cache directory if it doesn't exist
+Path("data/cache").mkdir(parents=True, exist_ok=True)
 
 RELIABLE_TICKERS = [
     'AAPL',  # Apple
@@ -43,22 +47,29 @@ RELIABLE_TICKERS = [
     'WMT'    # Walmart
 ]
 
+# Global rate limiter
+last_request_time = {}
+MIN_REQUEST_INTERVAL = 0.5  # seconds between requests per ticker
+
 def get_sp500_tickers() -> List[str]:
     """Get list of S&P 500 tickers."""
     try:
         # For testing, use a small set of reliable tickers
         if os.getenv('TEST_MODE', 'false').lower() == 'true':
-            return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+            return RELIABLE_TICKERS[:5]
             
-        # Use yfinance to get S&P 500 tickers
-        sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
-        return sp500['Symbol'].tolist()
+        # Try to get S&P 500 tickers from Wikipedia
+        try:
+            sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+            return sp500['Symbol'].tolist()
+        except Exception as e:
+            logger.warning(f"Failed to get S&P 500 tickers from Wikipedia: {e}")
+            return RELIABLE_TICKERS
     except Exception as e:
         logger.error(f"Error getting S&P 500 tickers: {str(e)}")
-        # Return a default list of reliable tickers
-        return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+        return RELIABLE_TICKERS
 
-def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+def get_cached_data(ticker: str) -> Optional[Dict[str, Any]]:
     """Get data from cache if available and not expired."""
     cache_file = f'data/cache/{ticker}.pkl'
     if os.path.exists(cache_file):
@@ -66,9 +77,9 @@ def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.
             with open(cache_file, 'rb') as f:
                 cached_data = pickle.load(f)
                 cache_date = cached_data.get('date')
-                # Cache is valid for 24 hours
-                if cache_date and datetime.now() - cache_date < timedelta(hours=24):
-                    return cached_data.get('data')
+                # Cache is valid for 4 hours
+                if cache_date and datetime.now() - cache_date < timedelta(hours=4):
+                    return cached_data
         except Exception as e:
             logger.warning(f"Error reading cache for {ticker}: {str(e)}")
     return None
@@ -86,11 +97,27 @@ def save_to_cache(ticker: str, data: pd.DataFrame) -> None:
     except Exception as e:
         logger.warning(f"Error saving cache for {ticker}: {str(e)}")
 
+async def _enforce_rate_limit(ticker: str) -> None:
+    """Enforce rate limiting for API requests."""
+    global last_request_time
+    current_time = time.time()
+    if ticker in last_request_time:
+        elapsed = current_time - last_request_time[ticker]
+        if elapsed < MIN_REQUEST_INTERVAL:
+            await asyncio.sleep(MIN_REQUEST_INTERVAL - elapsed)
+    last_request_time[ticker] = time.time()
+
 async def get_stock_data_async(ticker: str) -> Optional[pd.DataFrame]:
     """Get historical data for a single stock."""
     try:
-        # Add delay to avoid rate limiting
-        await asyncio.sleep(1)
+        # Check cache first
+        cached = get_cached_data(ticker)
+        if cached:
+            logger.info(f"Using cached data for {ticker}")
+            return cached['data']
+
+        # Enforce rate limit
+        await _enforce_rate_limit(ticker)
         
         # Create a yfinance Ticker object
         stock = yf.Ticker(ticker)
@@ -101,15 +128,24 @@ async def get_stock_data_async(ticker: str) -> Optional[pd.DataFrame]:
         
         for attempt in range(max_retries):
             try:
-                data = stock.history(period='2y')
+                # Use a session to manage connections
+                with requests.Session() as session:
+                    stock.session = session
+                    data = stock.history(period='2y')
                 
                 if data.empty:
                     logger.error(f"Empty data received for {ticker}")
                     return None
                     
-                # Add ticker column
+                # Add ticker column and validate
                 data['Ticker'] = ticker
-                return data
+                if validate_stock_data(data):
+                    # Save to cache
+                    save_to_cache(ticker, data)
+                    return data
+                else:
+                    logger.error(f"Invalid data received for {ticker}")
+                    return None
                 
             except Exception as e:
                 if attempt < max_retries - 1:
@@ -127,7 +163,7 @@ async def get_batch_data_async(tickers: List[str]) -> Dict[str, pd.DataFrame]:
     """Get historical data for multiple stocks concurrently."""
     try:
         # Limit concurrency to avoid overwhelming the API
-        semaphore = asyncio.Semaphore(5)  # Max 5 concurrent requests
+        semaphore = asyncio.Semaphore(3)  # Reduced to 3 concurrent requests
         
         async def get_with_semaphore(ticker):
             async with semaphore:
@@ -137,10 +173,15 @@ async def get_batch_data_async(tickers: List[str]) -> Dict[str, pd.DataFrame]:
         tasks = [get_with_semaphore(ticker) for ticker in tickers]
         
         # Wait for all tasks to complete
-        results = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Filter out None results and create dictionary
-        return {ticker: data for ticker, data in results if data is not None}
+        # Filter out None results and exceptions
+        valid_results = {}
+        for result in results:
+            if isinstance(result, tuple) and result[1] is not None:
+                valid_results[result[0]] = result[1]
+        
+        return valid_results
         
     except Exception as e:
         logger.error(f"Error in batch data retrieval: {str(e)}")
@@ -153,11 +194,12 @@ def get_batch_data(tickers: List[str]) -> Dict[str, pd.DataFrame]:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
-        # Run async function
-        results = loop.run_until_complete(get_batch_data_async(tickers))
-        
-        # Close loop
-        loop.close()
+        try:
+            # Run async function
+            results = loop.run_until_complete(get_batch_data_async(tickers))
+        finally:
+            # Always close the loop
+            loop.close()
         
         return results
         
@@ -176,8 +218,8 @@ def validate_stock_data(data: pd.DataFrame) -> bool:
         True if data is valid, False otherwise
     """
     try:
-        # Check for minimum data points (1 year)
-        if len(data) < 252:
+        # Check for minimum data points (6 months)
+        if len(data) < 126:
             return False
             
         # Check for required columns
@@ -212,41 +254,25 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
         if not end_date:
             end_date = datetime.now().strftime('%Y-%m-%d')
             
-        spy = yf.Ticker('SPY')
-        data = spy.history(start=start_date, end=end_date)
+        # Check cache first
+        cached = get_cached_data('SPY')
+        if cached:
+            return cached['data']
+            
+        # Get fresh data
+        with requests.Session() as session:
+            spy = yf.Ticker('SPY')
+            spy.session = session
+            data = spy.history(start=start_date, end=end_date)
         
         if data.empty:
             logger.warning("No market data available")
             return pd.DataFrame()
             
+        # Save to cache
+        save_to_cache('SPY', data)
         return data
         
     except Exception as e:
         logger.error(f"Error getting market data: {str(e)}")
-        return pd.DataFrame()
-
-async def _get_stock_data_async(ticker):
-    """Get stock data for a single ticker asynchronously."""
-    try:
-        stock = yf.Ticker(ticker)
-        data = await asyncio.to_thread(stock.history, period="2y")
-        if data.empty:
-            logger.error(f"Empty data received for {ticker}")
-            return None
-        return data
-    except Exception as e:
-        logger.error(f"Error getting data for {ticker}: {str(e)}")
-        return None
-
-async def _batch_data_async(tickers):
-    """Get stock data for a batch of tickers asynchronously."""
-    tasks = []
-    for ticker in tickers:
-        tasks.append(_get_stock_data_async(ticker))
-    
-    results = await asyncio.gather(*tasks)
-    return {ticker: data for ticker, data in zip(tickers, results) if data is not None}
-
-def get_batch_data_async(tickers):
-    """Synchronous wrapper for async batch data retrieval."""
-    return asyncio.run(_batch_data_async(tickers)) 
+        return pd.DataFrame() 
