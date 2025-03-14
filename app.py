@@ -33,21 +33,33 @@ def initialize_data():
         logger.error(f"Error initializing data: {str(e)}", exc_info=True)
         raise
 
+@app.route('/')
+def home():
+    """Home page route."""
+    return jsonify({
+        'status': 'ok',
+        'message': 'Momentum Trading API',
+        'endpoints': [
+            '/api/momentum-signals'
+        ]
+    })
+
 @app.route('/api/momentum-signals')
 def get_momentum_signals():
     """Get momentum trading signals."""
-    logger.info("Running strategy to generate fresh signals...")
-    logger.info("Initializing data...")
-    
     try:
-        results = run_strategy()
-        if not results:
+        signals = run_strategy()
+        
+        if not signals:
             return jsonify({'error': 'No momentum signals available'}), 404
             
-        return jsonify(results)
+        return jsonify({
+            'status': 'success',
+            'signals': signals
+        })
         
     except Exception as e:
-        logger.error(f"Error generating momentum signals: {str(e)}")
+        logger.error(f"Error getting momentum signals: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/performance', methods=['GET'])
