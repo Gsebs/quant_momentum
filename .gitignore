@@ -4,7 +4,10 @@ __pycache__/
 *$py.class
 *.so
 .Python
+<<<<<<< HEAD
 env/
+=======
+>>>>>>> 6b49d541da941037acb260474c6f8b97715dd096
 build/
 develop-eggs/
 dist/
@@ -20,6 +23,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+<<<<<<< HEAD
 venv/
 
 # Data files
@@ -40,6 +44,16 @@ yarn-error.log*
 .env.development.local
 .env.test.local
 .env.production.local
+=======
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Virtual Environment
+venv/
+ENV/
+>>>>>>> 6b49d541da941037acb260474c6f8b97715dd096
 
 # IDE
 .idea/
@@ -47,6 +61,7 @@ yarn-error.log*
 *.swp
 *.swo
 
+<<<<<<< HEAD
 # OS
 .DS_Store
 Thumbs.db
@@ -58,3 +73,16 @@ Thumbs.db
 # Project specific
 logs/
 models/ 
+=======
+# Project specific
+data/
+*.db
+*.xlsx
+*.csv
+logs/
+models/
+
+# OS specific
+.DS_Store
+Thumbs.db 
+>>>>>>> 6b49d541da941037acb260474c6f8b97715dd096

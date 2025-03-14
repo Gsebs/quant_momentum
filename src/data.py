@@ -28,6 +28,7 @@ import asyncio
 import aiohttp
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from .cache import redis_cache
 
 logger = logging.getLogger(__name__)
 
@@ -371,4 +372,78 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
         
     except Exception as e:
         logger.error(f"Error getting market data: {str(e)}")
-        return pd.DataFrame() 
+        return pd.DataFrame()
+
+@redis_cache(expire_time=21600)  # Cache for 6 hours
+async def get_stock_data(ticker, period="1y"):
+    """
+    Fetch stock data for a given ticker with caching and rate limiting.
+    """
+    logger.info(f"Fetching data for {ticker}")
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            # Add jitter to delay
+            delay = random.uniform(MIN_DELAY, MAX_DELAY)
+            if attempt > 0:
+                logger.info(f"Waiting {delay:.2f} seconds before retry {attempt + 1} for {ticker}")
+                time.sleep(delay)
+
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period=period)
+            
+            if hist.empty:
+                raise ValueError(f"No data returned for {ticker}")
+                
+            # Process the data
+            data = {
+                'ticker': ticker,
+                'current_price': hist['Close'][-1],
+                'volume': hist['Volume'][-1],
+                'price_change': (hist['Close'][-1] - hist['Close'][0]) / hist['Close'][0],
+                'last_updated': datetime.now().isoformat()
+            }
+            
+            return data
+
+        except Exception as e:
+            logger.warning(f"Attempt {attempt + 1} failed for {ticker}: {str(e)}")
+            if attempt == MAX_RETRIES - 1:
+                raise
+
+async def get_batch_data(tickers):
+    """
+    Process tickers in batches with rate limiting.
+    """
+    results = []
+    num_batches = (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE
+    
+    for i in range(num_batches):
+        batch_start = i * BATCH_SIZE
+        batch_end = min((i + 1) * BATCH_SIZE, len(tickers))
+        batch = tickers[batch_start:batch_end]
+        
+        logger.info(f"Processing batch {i + 1} of {num_batches}")
+        
+        # Process each ticker in the batch
+        for ticker in batch:
+            try:
+                data = await get_stock_data(ticker)
+                results.append(data)
+            except Exception as e:
+                logger.error(f"Error processing {ticker}: {str(e)}")
+                continue
+        
+        # Add delay between batches
+        if i < num_batches - 1:
+            delay = random.uniform(MIN_DELAY * 2, MAX_DELAY * 2)
+            logger.info(f"Waiting {delay:.2f} seconds before next batch")
+            time.sleep(delay)
+    
+    return results
+
+def get_test_data():
+    """
+    Get data for test mode using a reduced set of reliable tickers.
+    """
+    return get_batch_data(RELIABLE_TICKERS)

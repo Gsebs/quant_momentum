@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Grid, Paper, Typography, Box } from '@mui/material';
+import { Container, Grid, Paper, Typography, Box, Alert, Button } from '@mui/material';
 import { fetchMomentumSignals, fetchPerformanceData, getChartUrl } from '../services/api';
 import MomentumTable from './MomentumTable';
 import PerformanceChart from './PerformanceChart';
+import LoadingOverlay from './LoadingOverlay';
 
 const Dashboard = () => {
     const [momentumData, setMomentumData] = useState([]);
@@ -10,27 +11,52 @@ const Dashboard = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    useEffect(() => {
-        const loadData = async () => {
-            try {
-                const [signals, performance] = await Promise.all([
-                    fetchMomentumSignals(),
-                    fetchPerformanceData()
-                ]);
-                setMomentumData(signals);
-                setPerformanceData(performance);
-            } catch (err) {
-                setError(err.message);
-            } finally {
-                setLoading(false);
-            }
-        };
+    const loadData = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const [signals, performance] = await Promise.all([
+                fetchMomentumSignals(),
+                fetchPerformanceData()
+            ]);
+            setMomentumData(signals);
+            setPerformanceData(performance);
+        } catch (err) {
+            setError(err.message || 'An error occurred while fetching data. The server might be temporarily unavailable due to rate limiting.');
+        } finally {
+            setLoading(false);
+        }
+    };
 
+    useEffect(() => {
         loadData();
     }, []);
 
-    if (loading) return <Typography>Loading...</Typography>;
-    if (error) return <Typography color="error">{error}</Typography>;
+    if (loading) return <LoadingOverlay message="Loading dashboard data..." />;
+    
+    if (error) {
+        return (
+            <Container maxWidth="lg">
+                <Box sx={{ my: 4 }}>
+                    <Alert 
+                        severity="error" 
+                        action={
+                            <Button color="inherit" size="small" onClick={loadData}>
+                                Retry
+                            </Button>
+                        }
+                        sx={{ mb: 2 }}
+                    >
+                        {error}
+                    </Alert>
+                    <Typography variant="body1" color="text.secondary">
+                        The server might be experiencing high load or rate limiting from data providers.
+                        Please try again in a few minutes.
+                    </Typography>
+                </Box>
+            </Container>
+        );
+    }
 
     return (
         <Container maxWidth="lg">

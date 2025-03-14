@@ -4,8 +4,11 @@ import logging
 import pandas as pd
 from flask import Flask, jsonify, send_file, send_from_directory
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from src.strategy import run_strategy
-from datetime import datetime
+from src.cache import clear_cache
+from datetime import datetime, timedelta
 
 # Configure logging
 logging.basicConfig(
@@ -17,6 +20,14 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+
+# Configure rate limiting
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri=os.getenv("REDIS_URL", "redis://localhost:6379")
+)
 
 # Create necessary directories on startup
 os.makedirs('data', exist_ok=True)
@@ -34,17 +45,21 @@ def initialize_data():
         raise
 
 @app.route('/')
+@limiter.exempt
 def home():
     """Home page route."""
     return jsonify({
         'status': 'ok',
         'message': 'Momentum Trading API',
         'endpoints': [
-            '/api/momentum-signals'
+            '/api/momentum-signals',
+            '/api/performance',
+            '/api/charts/<filename>'
         ]
     })
 
 @app.route('/api/momentum-signals')
+@limiter.limit("30/minute")
 def get_momentum_signals():
     """Get momentum trading signals."""
     try:
@@ -55,7 +70,9 @@ def get_momentum_signals():
             
         return jsonify({
             'status': 'success',
-            'signals': signals
+            'signals': signals,
+            'cached': True,
+            'timestamp': datetime.now().isoformat()
         })
         
     except Exception as e:
@@ -63,11 +80,12 @@ def get_momentum_signals():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/performance', methods=['GET'])
+@limiter.limit("30/minute")
 def get_performance():
     try:
         report_file = 'data/reports/momentum_report.xlsx'
         if not os.path.exists(report_file):
-            initialize_data()  # Try to generate the report if it doesn't exist
+            initialize_data()
             if not os.path.exists(report_file):
                 return jsonify({'error': 'Performance report not available'}), 404
             
@@ -76,6 +94,7 @@ def get_performance():
         
         return jsonify({
             'performance': performance,
+            'cached': True,
             'generated_at': datetime.now().isoformat()
         })
         
@@ -84,6 +103,7 @@ def get_performance():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/charts/<filename>', methods=['GET'])
+@limiter.limit("60/minute")
 def get_chart(filename):
     try:
         return send_from_directory('data/charts', filename)
@@ -92,8 +112,18 @@ def get_chart(filename):
         return jsonify({'error': f'Chart {filename} not found'}), 404
 
 @app.route('/health', methods=['GET'])
+@limiter.exempt
 def health_check():
     return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
+
+@app.route('/api/cache/clear', methods=['POST'])
+@limiter.limit("1/hour")
+def clear_cache_endpoint():
+    try:
+        clear_cache()
+        return jsonify({'status': 'success', 'message': 'Cache cleared successfully'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
