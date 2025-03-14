@@ -344,13 +344,13 @@ def run_strategy():
         tickers = get_sp500_tickers()
         if os.getenv('TEST_MODE', 'false').lower() == 'true':
             logger.info("Running in test mode with reduced ticker set")
-            tickers = tickers[:50]
+            tickers = tickers[:5]  # Reduced to 5 tickers for testing
         
         logger.info(f"Retrieved {len(tickers)} tickers")
         
         # Get historical data for all tickers
         logger.info("Retrieving historical data...")
-        stock_data = get_batch_data_async(tickers)
+        stock_data = get_batch_data(tickers)  # Using synchronous wrapper
         
         if not stock_data:
             logger.error("No valid stock data retrieved")
