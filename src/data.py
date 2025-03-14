@@ -126,14 +126,13 @@ def get_stock_data_sync(ticker: str) -> Optional[pd.DataFrame]:
         # Create a session with robust headers
         session = requests.Session()
         session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
             'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'max-age=0'
         })
-        
-        # Create a yfinance Ticker object with our session
-        stock = yf.Ticker(ticker, session=session)
         
         # Get historical data with retries
         max_retries = 3
@@ -141,8 +140,26 @@ def get_stock_data_sync(ticker: str) -> Optional[pd.DataFrame]:
         
         for attempt in range(max_retries):
             try:
-                # Use a longer timeout and more specific parameters
-                data = stock.history(period='2y', interval='1d', timeout=20)
+                # Create a new Ticker object for each attempt
+                stock = yf.Ticker(ticker, session=session)
+                
+                # Try to get info first to validate the ticker
+                info = stock.info
+                if not info:
+                    logger.error(f"No info available for {ticker}")
+                    return None
+                
+                # Get historical data with specific parameters
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=730)  # 2 years
+                
+                data = stock.history(
+                    start=start_date.strftime('%Y-%m-%d'),
+                    end=end_date.strftime('%Y-%m-%d'),
+                    interval='1d',
+                    auto_adjust=True,
+                    timeout=30
+                )
                 
                 if data.empty:
                     logger.error(f"Empty data received for {ticker}")
