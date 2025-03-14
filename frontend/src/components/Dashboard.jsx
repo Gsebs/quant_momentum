@@ -1,119 +1,111 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Grid, Paper, Typography, Box, Alert, Button } from '@mui/material';
-import { fetchMomentumSignals, fetchPerformanceData, getChartUrl } from '../services/api';
-import MomentumTable from './MomentumTable';
+import { Container, Grid, Paper, Box, Typography, CircularProgress } from '@mui/material';
+import TradingMetrics from './TradingMetrics';
 import PerformanceChart from './PerformanceChart';
-import LoadingOverlay from './LoadingOverlay';
+import MomentumTable from './MomentumTable';
+import AlertCenter from './AlertCenter';
+import { fetchDashboardData } from '../services/api';
 
 const Dashboard = () => {
-    const [momentumData, setMomentumData] = useState([]);
-    const [performanceData, setPerformanceData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-
-    const loadData = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const [signals, performance] = await Promise.all([
-                fetchMomentumSignals(),
-                fetchPerformanceData()
-            ]);
-            setMomentumData(signals);
-            setPerformanceData(performance);
-        } catch (err) {
-            setError(err.message || 'An error occurred while fetching data. The server might be temporarily unavailable due to rate limiting.');
-        } finally {
-            setLoading(false);
-        }
-    };
+    const [dashboardData, setDashboardData] = useState(null);
 
     useEffect(() => {
-        loadData();
+        const loadDashboardData = async () => {
+            try {
+                setLoading(true);
+                const data = await fetchDashboardData();
+                setDashboardData(data);
+                setError(null);
+            } catch (err) {
+                setError('Failed to load dashboard data. Please try again later.');
+                console.error('Dashboard data fetch error:', err);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadDashboardData();
+        const interval = setInterval(loadDashboardData, 300000); // Refresh every 5 minutes
+
+        return () => clearInterval(interval);
     }, []);
 
-    if (loading) return <LoadingOverlay message="Loading dashboard data..." />;
-    
+    if (loading) {
+        return (
+            <Box
+                display="flex"
+                justifyContent="center"
+                alignItems="center"
+                minHeight="80vh"
+            >
+                <CircularProgress />
+            </Box>
+        );
+    }
+
     if (error) {
         return (
-            <Container maxWidth="lg">
-                <Box sx={{ my: 4 }}>
-                    <Alert 
-                        severity="error" 
-                        action={
-                            <Button color="inherit" size="small" onClick={loadData}>
-                                Retry
-                            </Button>
-                        }
-                        sx={{ mb: 2 }}
-                    >
-                        {error}
-                    </Alert>
-                    <Typography variant="body1" color="text.secondary">
-                        The server might be experiencing high load or rate limiting from data providers.
-                        Please try again in a few minutes.
-                    </Typography>
-                </Box>
-            </Container>
+            <Box
+                display="flex"
+                justifyContent="center"
+                alignItems="center"
+                minHeight="80vh"
+            >
+                <Typography color="error" variant="h6">
+                    {error}
+                </Typography>
+            </Box>
         );
     }
 
     return (
-        <Container maxWidth="lg">
-            <Box sx={{ my: 4 }}>
-                <Typography variant="h4" component="h1" gutterBottom>
-                    Momentum Trading Strategy Dashboard
-                </Typography>
-
-                <Grid container spacing={3}>
-                    {/* Performance Charts */}
-                    <Grid item xs={12}>
-                        <Paper sx={{ p: 2 }}>
-                            <Typography variant="h6" gutterBottom>
-                                Strategy Performance
-                            </Typography>
-                            <PerformanceChart data={performanceData} />
-                        </Paper>
-                    </Grid>
-
-                    {/* Momentum Signals Table */}
-                    <Grid item xs={12}>
-                        <Paper sx={{ p: 2 }}>
-                            <Typography variant="h6" gutterBottom>
-                                Top Momentum Signals
-                            </Typography>
-                            <MomentumTable data={momentumData} />
-                        </Paper>
-                    </Grid>
-
-                    {/* Static Charts */}
-                    <Grid item xs={12} md={6}>
-                        <Paper sx={{ p: 2 }}>
-                            <Typography variant="h6" gutterBottom>
-                                Correlation Heatmap
-                            </Typography>
-                            <img 
-                                src={getChartUrl('correlation_heatmap.png')} 
-                                alt="Correlation Heatmap"
-                                style={{ width: '100%', height: 'auto' }}
-                            />
-                        </Paper>
-                    </Grid>
-
-                    <Grid item xs={12} md={6}>
-                        <Paper sx={{ p: 2 }}>
-                            <Typography variant="h6" gutterBottom>
-                                Performance Plot
-                            </Typography>
-                            <img 
-                                src={getChartUrl('performance_plot.png')} 
-                                alt="Performance Plot"
-                                style={{ width: '100%', height: 'auto' }}
-                            />
-                        </Paper>
-                    </Grid>
+        <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+            <Grid container spacing={3}>
+                <Grid item xs={12}>
+                    <TradingMetrics data={dashboardData?.metrics} />
                 </Grid>
-            </Box>
+                
+                <Grid item xs={12} lg={8}>
+                    <Paper
+                        sx={{
+                            p: 2,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            height: 400,
+                        }}
+                    >
+                        <Typography variant="h6" gutterBottom>
+                            Performance History
+                        </Typography>
+                        <PerformanceChart data={dashboardData?.performance} />
+                    </Paper>
+                </Grid>
+                
+                <Grid item xs={12} lg={4}>
+                    <Paper
+                        sx={{
+                            p: 2,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            height: 400,
+                            overflowY: 'auto',
+                        }}
+                    >
+                        <AlertCenter alerts={dashboardData?.alerts} />
+                    </Paper>
+                </Grid>
+                
+                <Grid item xs={12}>
+                    <Paper sx={{ p: 2 }}>
+                        <Typography variant="h6" gutterBottom>
+                            Current Momentum Signals
+                        </Typography>
+                        <MomentumTable data={dashboardData?.signals} />
+                    </Paper>
+                </Grid>
+            </Grid>
         </Container>
     );
 };

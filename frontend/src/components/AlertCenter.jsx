@@ -1,46 +1,41 @@
 import React from 'react';
 import {
-  Box,
   List,
   ListItem,
   ListItemIcon,
   ListItemText,
   Typography,
-  Paper,
-  Chip,
+  Box,
+  Alert,
 } from '@mui/material';
 import {
-  NotificationsActive as AlertIcon,
-  TrendingUp as PositiveIcon,
-  TrendingDown as NegativeIcon,
-  Info as InfoIcon,
   Warning as WarningIcon,
+  Error as ErrorIcon,
+  Info as InfoIcon,
 } from '@mui/icons-material';
 import { formatDate } from '../utils/formatters';
 
 const getAlertIcon = (type) => {
-  switch (type.toLowerCase()) {
-    case 'positive':
-      return <PositiveIcon sx={{ color: 'success.main' }} />;
-    case 'negative':
-      return <NegativeIcon sx={{ color: 'error.main' }} />;
+  switch (type) {
+    case 'danger':
+      return <ErrorIcon color="error" />;
     case 'warning':
-      return <WarningIcon sx={{ color: 'warning.main' }} />;
+      return <WarningIcon color="warning" />;
     case 'info':
+      return <InfoIcon color="info" />;
     default:
-      return <InfoIcon sx={{ color: 'info.main' }} />;
+      return <InfoIcon />;
   }
 };
 
-const getAlertColor = (type) => {
-  switch (type.toLowerCase()) {
-    case 'positive':
-      return 'success';
-    case 'negative':
+const getAlertSeverity = (type) => {
+  switch (type) {
+    case 'danger':
       return 'error';
     case 'warning':
       return 'warning';
     case 'info':
+      return 'info';
     default:
       return 'info';
   }
@@ -49,60 +44,45 @@ const getAlertColor = (type) => {
 const AlertCenter = ({ alerts = [] }) => {
   if (!alerts || alerts.length === 0) {
     return (
-      <Box sx={{ textAlign: 'center', py: 4 }}>
+      <Box sx={{ p: 2, textAlign: 'center' }}>
         <Typography color="textSecondary">
-          No alerts at this time
+          No active alerts
         </Typography>
       </Box>
     );
   }
 
   return (
-    <List sx={{ width: '100%', bgcolor: 'background.paper' }}>
-      {alerts.map((alert, index) => (
-        <ListItem
-          key={`${alert.id || index}`}
-          sx={{
-            mb: 1,
-            borderRadius: 1,
-            border: 1,
-            borderColor: 'divider',
-            '&:hover': {
-              bgcolor: 'action.hover',
-            },
-          }}
-        >
-          <ListItemIcon>
-            {getAlertIcon(alert.type)}
-          </ListItemIcon>
-          <ListItemText
-            primary={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Typography variant="subtitle1">
-                  {alert.title}
-                </Typography>
-                <Chip
-                  size="small"
-                  label={alert.type}
-                  color={getAlertColor(alert.type)}
-                  sx={{ textTransform: 'capitalize' }}
-                />
-              </Box>
-            }
-            secondary={
-              <Box sx={{ mt: 0.5 }}>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
+    <Box>
+      <Typography variant="h6" gutterBottom>
+        System Alerts
+      </Typography>
+      <List>
+        {alerts.map((alert, index) => (
+          <ListItem key={index} sx={{ mb: 1 }}>
+            <Alert
+              severity={getAlertSeverity(alert.type)}
+              icon={getAlertIcon(alert.type)}
+              sx={{
+                width: '100%',
+                '& .MuiAlert-message': {
+                  width: '100%'
+                }
+              }}
+            >
+              <Box>
+                <Typography variant="body1">
                   {alert.message}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" color="textSecondary">
                   {formatDate(alert.timestamp)}
                 </Typography>
               </Box>
-            }
-          />
-        </ListItem>
-      ))}
-    </List>
+            </Alert>
+          </ListItem>
+        ))}
+      </List>
+    </Box>
   );
 };
 
