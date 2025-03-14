@@ -86,3 +86,6 @@ models/
 .DS_Store
 Thumbs.db 
 >>>>>>> 6b49d541da941037acb260474c6f8b97715dd096
+
+# Local Netlify folder
+.netlify

@@ -12,3 +12,4 @@ Flask-Limiter==2.4.0
 requests-cache==1.1.1
 python-dotenv==1.0.0
 scikit-learn==1.2.2
+aiohttp==3.11.13
