@@ -26,7 +26,7 @@ from src.reporting import generate_report
 from src.indicators import calculate_momentum_indicators, calculate_rsi, calculate_macd
 from src.risk import calculate_risk_metrics, calculate_position_sizes, analyze_sector_exposure
 from src.backtest import MomentumBacktest, backtest_strategy, BacktestResult, run_backtest_from_recommendations
-from src.data import get_sp500_tickers, get_batch_data, get_batch_data_async, validate_stock_data
+from src.data import get_sp500_tickers, get_batch_data, validate_stock_data
 from src.momentum import calculate_momentum_metrics, calculate_momentum_score
 import time
 from . import momentum
