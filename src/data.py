@@ -123,9 +123,14 @@ def get_stock_data_sync(ticker: str) -> Optional[pd.DataFrame]:
             logger.info(f"Using cached data for {ticker}")
             return cached['data']
 
-        # Create a session with headers
+        # Create a session with robust headers
         session = requests.Session()
-        session.headers.update(HEADERS)
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
+        })
         
         # Create a yfinance Ticker object with our session
         stock = yf.Ticker(ticker, session=session)
@@ -136,7 +141,8 @@ def get_stock_data_sync(ticker: str) -> Optional[pd.DataFrame]:
         
         for attempt in range(max_retries):
             try:
-                data = stock.history(period='2y')
+                # Use a longer timeout and more specific parameters
+                data = stock.history(period='2y', interval='1d', timeout=20)
                 
                 if data.empty:
                     logger.error(f"Empty data received for {ticker}")
