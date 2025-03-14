@@ -26,6 +26,7 @@ import pickle
 import random
 import asyncio
 import aiohttp
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -43,24 +44,19 @@ RELIABLE_TICKERS = [
 ]
 
 def get_sp500_tickers() -> List[str]:
-    """
-    Get current S&P 500 tickers using Wikipedia.
-    Returns a list of ticker symbols.
-    """
+    """Get list of S&P 500 tickers."""
     try:
-        resp = requests.get('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
-        soup = bs.BeautifulSoup(resp.text, 'lxml')
-        table = soup.find('table', {'class': 'wikitable'})
-        tickers = []
-        for row in table.findAll('tr')[1:]:
-            ticker = row.findAll('td')[0].text.strip()
-            tickers.append(ticker)
-        return tickers
+        # For testing, use a small set of reliable tickers
+        if os.getenv('TEST_MODE', 'false').lower() == 'true':
+            return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+            
+        # Use yfinance to get S&P 500 tickers
+        sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+        return sp500['Symbol'].tolist()
     except Exception as e:
         logger.error(f"Error getting S&P 500 tickers: {str(e)}")
-        # Use reliable tickers as fallback
-        logger.info(f"Using fallback list of {len(RELIABLE_TICKERS)} tickers")
-        return RELIABLE_TICKERS
+        # Return a default list of reliable tickers
+        return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
 
 def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """Get data from cache if available and not expired."""
@@ -90,113 +86,84 @@ def save_to_cache(ticker: str, data: pd.DataFrame) -> None:
     except Exception as e:
         logger.warning(f"Error saving cache for {ticker}: {str(e)}")
 
-async def get_stock_data_async(ticker: str, start_date: str, end_date: str, session: aiohttp.ClientSession) -> Optional[pd.DataFrame]:
-    """
-    Get historical stock data asynchronously.
-    
-    Args:
-        ticker: Stock ticker symbol
-        start_date: Start date in YYYY-MM-DD format
-        end_date: End date in YYYY-MM-DD format
-        session: aiohttp client session
+async def get_stock_data_async(ticker: str) -> Optional[pd.DataFrame]:
+    """Get historical data for a single stock."""
+    try:
+        # Add delay to avoid rate limiting
+        await asyncio.sleep(1)
         
-    Returns:
-        DataFrame with stock data or None if retrieval fails
-    """
-    # Check cache first
-    cached_data = get_cached_data(ticker, start_date, end_date)
-    if cached_data is not None:
-        return cached_data
+        # Create a yfinance Ticker object
+        stock = yf.Ticker(ticker)
         
-    # If not in cache, fetch from API
-    for attempt in range(3):
-        try:
-            # Add jitter to avoid synchronized retries
-            if attempt > 0:
-                await asyncio.sleep(5 * attempt + random.uniform(0, 2))
+        # Get historical data with retries
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                data = stock.history(period='2y')
                 
-            stock = yf.Ticker(ticker)
-            data = stock.history(start=start_date, end=end_date, timeout=20)
-            
-            if not data.empty:
-                # Save successful response to cache
-                save_to_cache(ticker, data)
+                if data.empty:
+                    logger.error(f"Empty data received for {ticker}")
+                    return None
+                    
+                # Add ticker column
+                data['Ticker'] = ticker
                 return data
                 
-        except Exception as e:
-            logger.warning(f"Attempt {attempt + 1} failed for {ticker}: {str(e)}")
-            if "rate limit" in str(e).lower():
-                # Add extra delay for rate limits
-                await asyncio.sleep(10)
-            
-    logger.error(f"Failed to get data for {ticker} after 3 attempts")
-    return None
-
-async def get_batch_data_async(
-    tickers: List[str],
-    start_date: str,
-    end_date: str,
-    batch_size: int = 2,
-    delay: int = 5
-) -> Dict[str, pd.DataFrame]:
-    """
-    Get stock data in batches asynchronously.
-    
-    Args:
-        tickers: List of stock tickers
-        start_date: Start date in YYYY-MM-DD format
-        end_date: End date in YYYY-MM-DD format
-        batch_size: Number of stocks to process in each batch
-        delay: Delay in seconds between batches
-        
-    Returns:
-        Dictionary mapping tickers to their historical data
-    """
-    stock_data = {}
-    total_batches = (len(tickers) + batch_size - 1) // batch_size
-    
-    async with aiohttp.ClientSession() as session:
-        for i in range(0, len(tickers), batch_size):
-            batch = tickers[i:i + batch_size]
-            batch_num = (i // batch_size) + 1
-            logger.info(f"Processing batch {batch_num}/{total_batches}")
-            
-            # Process batch concurrently
-            tasks = [
-                get_stock_data_async(ticker, start_date, end_date, session)
-                for ticker in batch
-            ]
-            results = await asyncio.gather(*tasks)
-            
-            # Store valid results
-            for ticker, data in zip(batch, results):
-                if data is not None and not data.empty:
-                    stock_data[ticker] = data
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Attempt {attempt + 1} failed for {ticker}: {str(e)}")
+                    await asyncio.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                else:
+                    logger.error(f"Failed to get data for {ticker} after {max_retries} attempts: {str(e)}")
+                    return None
                     
-            if i + batch_size < len(tickers):
-                # Add jitter to delay
-                await asyncio.sleep(delay + random.uniform(0, 2))
-                
-    return stock_data
+    except Exception as e:
+        logger.error(f"Error getting data for {ticker}: {str(e)}")
+        return None
 
-def get_batch_data(
-    tickers: List[str],
-    start_date: str,
-    end_date: str,
-    batch_size: int = 2,
-    delay: int = 5
-) -> Dict[str, pd.DataFrame]:
-    """
-    Synchronous wrapper for async batch data retrieval.
-    """
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+async def get_batch_data_async(tickers: List[str]) -> Dict[str, pd.DataFrame]:
+    """Get historical data for multiple stocks concurrently."""
     try:
-        return loop.run_until_complete(
-            get_batch_data_async(tickers, start_date, end_date, batch_size, delay)
-        )
-    finally:
+        # Limit concurrency to avoid overwhelming the API
+        semaphore = asyncio.Semaphore(5)  # Max 5 concurrent requests
+        
+        async def get_with_semaphore(ticker):
+            async with semaphore:
+                return ticker, await get_stock_data_async(ticker)
+        
+        # Create tasks for each ticker
+        tasks = [get_with_semaphore(ticker) for ticker in tickers]
+        
+        # Wait for all tasks to complete
+        results = await asyncio.gather(*tasks)
+        
+        # Filter out None results and create dictionary
+        return {ticker: data for ticker, data in results if data is not None}
+        
+    except Exception as e:
+        logger.error(f"Error in batch data retrieval: {str(e)}")
+        return {}
+
+def get_batch_data(tickers: List[str]) -> Dict[str, pd.DataFrame]:
+    """Synchronous wrapper for get_batch_data_async."""
+    try:
+        # Create event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Run async function
+        results = loop.run_until_complete(get_batch_data_async(tickers))
+        
+        # Close loop
         loop.close()
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error in get_batch_data: {str(e)}")
+        return {}
 
 def validate_stock_data(data: pd.DataFrame) -> bool:
     """
