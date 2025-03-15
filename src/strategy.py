@@ -95,63 +95,46 @@ def save_signals_to_cache(signals: List[Dict]) -> None:
     except Exception as e:
         logger.error(f"Error saving signals to cache: {e}")
 
-def process_batch(batch: List[str]) -> List[Dict]:
-    """Process a batch of tickers and return their momentum signals."""
-    signals = []
+def process_batch(tickers, batch_num, total_batches):
+    """Process a batch of tickers."""
+    logging.info(f"Processing batch {batch_num} of {total_batches}")
     
-    # Calculate date range for data (use historical data)
+    # Calculate date range for data
     today = datetime.now()
+    end_date = (today - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_date = (end_date - timedelta(days=365)).replace(hour=0, minute=0, second=0, microsecond=0)
     
-    # Get the most recent business day
-    end_date = today
-    while end_date.weekday() > 4:  # 5 is Saturday, 6 is Sunday
-        end_date = end_date - timedelta(days=1)
-        
-    # If it's before market open (9:30 AM EST), use previous business day
-    market_open = end_date.replace(hour=9, minute=30, second=0, microsecond=0)
-    if today < market_open:
-        end_date = end_date - timedelta(days=1)
-        while end_date.weekday() > 4:
-            end_date = end_date - timedelta(days=1)
-    
-    # Calculate start date (1 year ago)
-    start_date = end_date - timedelta(days=365)
-    
-    # Format dates
+    # Format dates as strings in YYYY-MM-DD format
     end_date_str = end_date.strftime('%Y-%m-%d')
     start_date_str = start_date.strftime('%Y-%m-%d')
     
-    for ticker in batch:
+    results = []
+    for ticker in tickers:
         try:
-            # Get stock data with date range
-            stock_data = get_stock_data(ticker, start_date=start_date_str, end_date=end_date_str)
-            
-            if stock_data is not None and not stock_data.empty:
-                # Extract metrics
-                signal = {
-                    'ticker': ticker,
-                    'price': stock_data['Adj Close'][-1],
-                    'volume': stock_data['Volume'].mean(),
-                    'momentum_score': ((stock_data['Adj Close'][-1] - stock_data['Adj Close'][0]) / stock_data['Adj Close'][0]) * 100,
-                    'timestamp': datetime.now().isoformat()
-                }
-                signals.append(signal)
-            else:
-                logger.warning(f"No data available for {ticker}")
-            
-        except RetryableError as e:
-            logger.warning(f"Retryable error for {ticker}: {str(e)}")
-            continue
-            
-        except DataFetchError as e:
-            logger.error(f"Data fetch error for {ticker}: {str(e)}")
-            continue
+            # Get historical data
+            df = get_stock_data(ticker, start_date_str, end_date_str)
+            if df is None or df.empty:
+                logging.warning(f"No data available for {ticker}")
+                continue
+                
+            # Calculate metrics
+            momentum_score = calculate_momentum_score(df)
+            if momentum_score is None:
+                logging.warning(f"Could not calculate momentum score for {ticker}")
+                continue
+                
+            results.append({
+                'ticker': ticker,
+                'momentum_score': momentum_score,
+                'current_price': df['Adj Close'][-1],
+                'volume': df['Volume'][-1]
+            })
             
         except Exception as e:
-            logger.error(f"Unexpected error processing {ticker}: {str(e)}")
+            logging.error(f"Error processing {ticker}: {str(e)}")
             continue
             
-    return signals
+    return results
 
 def update_signals_in_background(tickers: List[str]) -> None:
     """Update momentum signals in background thread."""

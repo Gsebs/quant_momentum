@@ -446,23 +446,10 @@ def get_stock_data(ticker, start_date, end_date):
             end_date = datetime.strptime(end_date, '%Y-%m-%d')
             
         # Ensure we're not requesting future data
-        today = datetime.now()
-        
-        # Get the most recent business day
-        most_recent = today
-        while most_recent.weekday() > 4:  # 5 is Saturday, 6 is Sunday
-            most_recent = most_recent - timedelta(days=1)
-            
-        # If it's before market open (9:30 AM EST), use previous business day
-        market_open = most_recent.replace(hour=9, minute=30, second=0, microsecond=0)
-        if today < market_open:
-            most_recent = most_recent - timedelta(days=1)
-            while most_recent.weekday() > 4:
-                most_recent = most_recent - timedelta(days=1)
-        
-        if end_date > most_recent:
-            end_date = most_recent
-            logging.info(f"Adjusted end_date to most recent business day ({end_date.strftime('%Y-%m-%d')})")
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        if end_date >= today:
+            end_date = today - timedelta(days=1)
+            logging.info(f"Adjusted end_date to yesterday ({end_date.strftime('%Y-%m-%d')})")
         
         # Format dates for yfinance
         start_str = start_date.strftime('%Y-%m-%d')
@@ -477,7 +464,8 @@ def get_stock_data(ticker, start_date, end_date):
                     ticker,
                     start=start_str,
                     end=end_str,
-                    progress=False
+                    progress=False,
+                    interval='1d'
                 )
                 break
             except Exception as e:
