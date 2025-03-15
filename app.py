@@ -39,6 +39,14 @@ limiter = Limiter(
     default_limits=["200 per day", "50 per hour"]
 )
 
+# List of reliable tickers for momentum strategy
+RELIABLE_TICKERS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "META",
+    "NVDA", "TSLA", "JPM", "V", "JNJ",
+    "WMT", "PG", "MA", "HD", "UNH",
+    "BAC", "XOM", "PFE", "CSCO", "VZ"
+]
+
 # Create necessary directories on startup
 def ensure_directories():
     try:
@@ -56,13 +64,13 @@ def initialize_data():
         logger.info("Initializing data...")
         ensure_directories()
         
-        # Run strategy (this will start background update if needed)
-        signals = run_strategy()
+        # Run strategy with reliable tickers
+        signals = run_strategy(RELIABLE_TICKERS)
         
         if not signals:
             logger.info("No cached signals available, background update started")
         else:
-            logger.info(f"Found {len(signals)} cached signals")
+            logger.info(f"Retrieved {len(signals)} cached signals")
             
     except Exception as e:
         logger.error(f"Error initializing data: {str(e)}")
@@ -94,32 +102,25 @@ def home():
 @limiter.limit("30/minute")
 def get_momentum_signals():
     """
-    Get momentum signals with background processing.
-    Returns cached data immediately if available.
+    Get momentum signals for stocks.
+    Returns cached data immediately and updates in background.
     """
     try:
-        signals = run_strategy()
-        
-        if not signals:
-            # Return empty list with status indicating background update
-            return jsonify({
-                'data': [],
-                'status': 'updating',
-                'message': 'Data is being updated in the background',
-                'timestamp': datetime.now().isoformat()
-            })
+        # Initialize data if needed
+        signals = run_strategy(RELIABLE_TICKERS)
         
         return jsonify({
+            'status': 'updating' if not signals else 'success',
             'data': signals,
-            'status': 'success',
             'timestamp': datetime.now().isoformat()
         })
         
     except Exception as e:
-        logger.error(f"Error getting momentum signals: {str(e)}", exc_info=True)
+        logger.error(f"Error in get_momentum_signals: {str(e)}")
         return jsonify({
-            'error': 'Internal server error',
-            'message': str(e)
+            'status': 'error',
+            'message': 'Internal server error',
+            'timestamp': datetime.now().isoformat()
         }), 500
 
 @app.route('/api/performance', methods=['GET'])
