@@ -26,6 +26,7 @@ limiter = Limiter(
     app=app,
     key_func=get_remote_address,
     default_limits=["200 per day", "50 per hour"],
+    storage_options={"ssl_cert_reqs": None},  # Disable SSL certificate verification
     storage_uri=os.getenv("REDISCLOUD_URL", os.getenv("REDIS_URL", "redis://localhost:6379"))
 )
 

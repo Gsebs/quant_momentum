@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize Redis connection
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
-redis_client = redis.from_url(REDIS_URL)
+redis_client = redis.from_url(REDIS_URL, ssl_cert_reqs=None)  # Disable SSL certificate verification
 
 # Initialize requests-cache for Yahoo Finance API calls
 requests_cache.install_cache(

@@ -377,7 +377,7 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
         return pd.DataFrame()
 
 @redis_cache(expire_time=21600)  # Cache for 6 hours
-def get_stock_data(ticker, period="1y"):
+def get_stock_data(ticker, period="1mo"):
     """
     Fetch stock data for a given ticker with caching and rate limiting.
     """
@@ -392,7 +392,7 @@ def get_stock_data(ticker, period="1y"):
                 time.sleep(delay)
 
             stock = yf.Ticker(ticker)
-            hist = stock.history(period=period)
+            hist = stock.history(period=period, interval="1d")
             
             if hist.empty:
                 raise ValueError(f"No data returned for {ticker}")
@@ -400,11 +400,15 @@ def get_stock_data(ticker, period="1y"):
             # Process the data
             data = {
                 'ticker': ticker,
-                'current_price': hist['Close'][-1],
-                'volume': hist['Volume'][-1],
-                'price_change': (hist['Close'][-1] - hist['Close'][0]) / hist['Close'][0],
+                'current_price': hist['Close'][-1] if not hist.empty else None,
+                'volume': hist['Volume'][-1] if not hist.empty else None,
+                'price_change': ((hist['Close'][-1] - hist['Close'][0]) / hist['Close'][0]) if not hist.empty else None,
                 'last_updated': datetime.now().isoformat()
             }
+            
+            # Validate data
+            if data['current_price'] is None or data['volume'] is None:
+                raise ValueError(f"Invalid data returned for {ticker}")
             
             return data
 
