@@ -95,15 +95,37 @@ def save_signals_to_cache(signals: List[Dict]) -> None:
     except Exception as e:
         logger.error(f"Error saving signals to cache: {e}")
 
-def process_ticker_batch(tickers: List[str], results: List[Dict]) -> None:
-    """Process a batch of tickers and append results."""
-    for ticker in tickers:
+def process_batch(batch: List[str]) -> List[Dict]:
+    """Process a batch of tickers and return their momentum signals."""
+    signals = []
+    for ticker in batch:
         try:
-            data = get_stock_data(ticker)
-            if data:
-                results.append(data)
+            # Get stock data
+            stock_data = get_stock_data(ticker)
+            
+            # Extract metrics
+            signal = {
+                'ticker': ticker,
+                'price': stock_data['current_price'],
+                'volume': stock_data['avg_volume'],
+                'momentum_score': stock_data['price_change'],
+                'timestamp': datetime.now().isoformat()
+            }
+            signals.append(signal)
+            
+        except RetryableError as e:
+            logger.warning(f"Retryable error for {ticker}: {str(e)}")
+            continue
+            
+        except DataFetchError as e:
+            logger.error(f"Data fetch error for {ticker}: {str(e)}")
+            continue
+            
         except Exception as e:
-            logger.error(f"Error processing {ticker}: {e}")
+            logger.error(f"Unexpected error processing {ticker}: {str(e)}")
+            continue
+            
+    return signals
 
 def update_signals_in_background(tickers: List[str]) -> None:
     """Update momentum signals in background thread."""
@@ -115,7 +137,7 @@ def update_signals_in_background(tickers: List[str]) -> None:
             batch = tickers[i:i + BATCH_SIZE]
             logger.info(f"Processing batch {(i//BATCH_SIZE)+1} of {(len(tickers)-1)//BATCH_SIZE + 1}")
             
-            process_ticker_batch(batch, results)
+            results.extend(process_batch(batch))
             
             # Add delay between batches
             if i + BATCH_SIZE < len(tickers):
@@ -124,7 +146,7 @@ def update_signals_in_background(tickers: List[str]) -> None:
         
         # Sort results by price change
         if results:
-            results.sort(key=lambda x: x['price_change'], reverse=True)
+            results.sort(key=lambda x: x['momentum_score'], reverse=True)
             save_signals_to_cache(results)
             logger.info(f"Successfully updated {len(results)} momentum signals")
         

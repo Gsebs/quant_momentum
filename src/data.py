@@ -422,104 +422,97 @@ def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Opti
     Returns:
         dict: Dictionary containing ticker, price, volume, and price_change
     """
-    if not start_date:
-        end_date = datetime.now().strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
-    
-    backoff = INITIAL_BACKOFF
-    
-    # Convert dates to timestamps
-    start_ts = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp())
-    end_ts = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp())
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Cache-Control': 'max-age=0'
-    }
-    
-    for attempt in range(MAX_RETRIES):
-        try:
-            # Add random delay between requests
-            delay = random.uniform(MIN_DELAY, MAX_DELAY)
-            logger.info(f"Rate limiting: sleeping for {delay:.2f} seconds before requesting {ticker}")
-            time.sleep(delay)
-            
-            # Create a session for better connection reuse
-            session = requests.Session()
+    try:
+        # Convert dates to timestamps
+        if start_date is None:
+            start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+        if end_date is None:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+
+        start_timestamp = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp())
+        end_timestamp = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp())
+
+        # Construct URL with proper parameters
+        base_url = "https://query1.finance.yahoo.com/v8/finance/chart/"
+        params = {
+            "symbol": ticker,
+            "period1": start_timestamp,
+            "period2": end_timestamp,
+            "interval": "1d",
+            "includePrePost": "false",
+            "events": "div,splits"
+        }
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0"
+        }
+
+        # Add random delay to avoid rate limiting
+        sleep_time = random.uniform(MIN_DELAY, MAX_DELAY)
+        logger.info(f"Rate limiting: sleeping for {sleep_time:.2f} seconds before requesting {ticker}")
+        time.sleep(sleep_time)
+
+        # Make request with session
+        with requests.Session() as session:
             session.headers.update(headers)
-            
-            # Yahoo Finance API URL
-            url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?symbol={ticker}&period1={start_ts}&period2={end_ts}&interval=1d'
-            
-            response = session.get(url, timeout=30)
+            response = session.get(base_url + ticker, params=params)
             response.raise_for_status()
-            
             data = response.json()
-            
+
             # Extract price data
-            result = data['chart']['result'][0]
-            timestamps = result['timestamp']
-            quotes = result['indicators']['quote'][0]
+            chart = data['chart']['result'][0]
+            timestamps = chart['timestamp']
+            quotes = chart['indicators']['quote'][0]
             
             # Create DataFrame
             df = pd.DataFrame({
-                'timestamp': timestamps,
-                'Open': quotes.get('open', []),
-                'High': quotes.get('high', []),
-                'Low': quotes.get('low', []),
-                'Close': quotes.get('close', []),
-                'Volume': quotes.get('volume', [])
+                'Date': pd.to_datetime([datetime.fromtimestamp(x) for x in timestamps]),
+                'Open': quotes['open'],
+                'High': quotes['high'],
+                'Low': quotes['low'],
+                'Close': quotes['close'],
+                'Volume': quotes['volume']
             })
-            
-            # Convert timestamps to datetime
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
-            df.set_index('timestamp', inplace=True)
-            
-            # Remove rows with missing data
-            df = df.dropna()
-            
-            if df.empty:
-                raise ValueError(f"No data available for {ticker}")
-            
+            df.set_index('Date', inplace=True)
+
             # Calculate metrics
-            current_price = float(df['Close'].iloc[-1])
-            avg_volume = float(df['Volume'].mean())
-            initial_price = float(df['Close'].iloc[0])
-            price_change = ((current_price - initial_price) / initial_price) * 100
-            
+            current_price = df['Close'].iloc[-1]
+            avg_volume = df['Volume'].mean()
+            price_change = ((current_price - df['Close'].iloc[0]) / df['Close'].iloc[0]) * 100
+
             return {
-                'ticker': ticker,
-                'price': current_price,
-                'volume': avg_volume,
-                'price_change': price_change
+                'current_price': current_price,
+                'avg_volume': avg_volume,
+                'price_change': price_change,
+                'data': df
             }
+
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:  # Too Many Requests
+            logger.warning(f"Rate limit hit for {ticker}, waiting {MAX_BACKOFF} seconds")
+            time.sleep(MAX_BACKOFF)
+            raise RetryableError(f"Rate limit exceeded for {ticker}")
+        else:
+            logger.error(f"HTTP error occurred while fetching {ticker}: {str(e)}")
+            raise DataFetchError(f"Failed to fetch data for {ticker}: {str(e)}")
             
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:  # Rate limit error
-                logger.warning(f"Rate limit hit for {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {backoff} seconds")
-                time.sleep(backoff)
-                backoff = min(backoff * 2, MAX_BACKOFF)
-                continue
-            else:
-                logger.error(f"HTTP error for {ticker}: {str(e)}")
-                raise ValueError(f"HTTP error for {ticker}")
-                
-        except Exception as e:
-            logger.warning(f"Error fetching {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {backoff} seconds: {str(e)}")
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(backoff)
-                backoff = min(backoff * 2, MAX_BACKOFF)
-                continue
-            else:
-                logger.error(f"Failed to fetch data for {ticker} after {MAX_RETRIES} attempts: {str(e)}")
-                raise ValueError(f"Could not fetch data for {ticker}")
-    
-    raise ValueError(f"Could not fetch data for {ticker} after {MAX_RETRIES} attempts")
+    except (KeyError, IndexError) as e:
+        logger.error(f"Data parsing error for {ticker}: {str(e)}")
+        raise DataFetchError(f"Failed to parse data for {ticker}: {str(e)}")
+        
+    except Exception as e:
+        logger.error(f"Unexpected error while fetching {ticker}: {str(e)}")
+        raise DataFetchError(f"Unexpected error for {ticker}: {str(e)}")
 
 def get_batch_data(tickers: List[str]) -> List[Dict]:
     """
