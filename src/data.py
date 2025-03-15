@@ -390,7 +390,8 @@ def redis_cache(expire_time=300):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             try:
-                redis_client = redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'))
+                # Create Redis client with SSL verification disabled
+                redis_client = redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'), ssl_cert_reqs=None)
                 
                 # Convert any Timestamp objects in args to strings
                 processed_args = []
