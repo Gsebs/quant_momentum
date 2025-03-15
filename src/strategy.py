@@ -100,8 +100,9 @@ def process_batch(batch: List[str]) -> List[Dict]:
     signals = []
     
     # Calculate date range for data (use historical data)
-    end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')  # 1 year of historical data
+    today = datetime.now()
+    end_date = (today - timedelta(days=1)).strftime('%Y-%m-%d')  # Use yesterday as end date
+    start_date = (today - timedelta(days=365)).strftime('%Y-%m-%d')  # 1 year of historical data
     
     for ticker in batch:
         try:
