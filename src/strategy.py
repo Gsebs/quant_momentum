@@ -26,7 +26,7 @@ from src.reporting import generate_report
 from src.indicators import calculate_momentum_indicators, calculate_rsi, calculate_macd
 from src.risk import calculate_risk_metrics, calculate_position_sizes, analyze_sector_exposure
 from src.backtest import MomentumBacktest, backtest_strategy, BacktestResult, run_backtest_from_recommendations
-from src.data import get_sp500_tickers, get_batch_data, validate_stock_data
+from src.data import get_sp500_tickers, get_batch_data, validate_stock_data, get_stock_data
 from src.momentum import calculate_momentum_metrics, calculate_momentum_score
 import time
 from . import momentum
@@ -50,6 +50,12 @@ os.makedirs('data', exist_ok=True)
 os.makedirs('data/reports', exist_ok=True)
 os.makedirs('data/cache', exist_ok=True)
 os.makedirs('models', exist_ok=True)
+
+# List of reliable tickers that consistently provide good data
+RELIABLE_TICKERS = [
+    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA', 'JPM', 'V', 'JNJ',
+    'WMT', 'PG', 'MA', 'HD', 'UNH', 'BAC', 'XOM', 'PFE', 'CSCO', 'VZ'
+]
 
 def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """Get data from cache if available and not expired."""

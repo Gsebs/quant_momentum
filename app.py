@@ -9,6 +9,7 @@ from flask_limiter.util import get_remote_address
 from src.strategy import run_strategy
 from src.cache import clear_cache
 from datetime import datetime, timedelta
+import redis
 
 # Configure logging
 logging.basicConfig(
@@ -21,13 +22,19 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# Configure rate limiting
+# Configure Redis for rate limiting
+redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+redis_client = redis.from_url(
+    redis_url,
+    ssl=True if redis_url.startswith('rediss://') else False,
+    ssl_cert_reqs=None  # Remove explicit SSL cert requirements
+)
+
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
-    storage_options={"ssl_cert_reqs": None},  # Disable SSL certificate verification
-    storage_uri=os.getenv("REDISCLOUD_URL", os.getenv("REDIS_URL", "redis://localhost:6379"))
+    storage_uri=redis_url,
+    storage_options={"ssl": True if redis_url.startswith('rediss://') else False}
 )
 
 # Create necessary directories on startup
