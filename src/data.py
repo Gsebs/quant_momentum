@@ -387,45 +387,49 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
 def redis_cache(expire_time=300):
     """Redis cache decorator."""
     def decorator(func):
-        @wraps(func)
+        @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # Generate cache key based on function name and arguments
-            cache_key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
-            
             try:
+                redis_client = redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'))
+                
+                # Convert any Timestamp objects in args to strings
+                processed_args = []
+                for arg in args:
+                    if isinstance(arg, pd.Timestamp):
+                        processed_args.append(arg.strftime('%Y-%m-%d'))
+                    else:
+                        processed_args.append(arg)
+                
+                # Convert any Timestamp objects in kwargs to strings
+                processed_kwargs = {}
+                for key, value in kwargs.items():
+                    if isinstance(value, pd.Timestamp):
+                        processed_kwargs[key] = value.strftime('%Y-%m-%d')
+                    else:
+                        processed_kwargs[key] = value
+                
+                # Generate cache key using processed arguments
+                cache_key = f"{func.__name__}:{str(processed_args)}:{str(processed_kwargs)}"
+                
                 # Try to get cached result
                 cached_result = redis_client.get(cache_key)
-                if cached_result:
-                    result = json.loads(cached_result)
-                    # Convert back to DataFrame if necessary
-                    if isinstance(result, dict) and 'data' in result and isinstance(result['data'], dict):
-                        df = pd.DataFrame.from_dict(result['data'])
-                        df.index = pd.to_datetime(df.index)
-                        result['data'] = df
-                    return result
+                if cached_result is not None:
+                    return pd.read_json(cached_result)
                 
-                # If no cached result, execute function
+                # If not cached, execute function and cache result
                 result = func(*args, **kwargs)
-                
-                # Convert DataFrame to dict for JSON serialization
-                if isinstance(result, dict) and 'data' in result and isinstance(result['data'], pd.DataFrame):
-                    result_copy = result.copy()
-                    df = result['data'].copy()
-                    # Convert index to string format
-                    df.index = df.index.strftime('%Y-%m-%d')
-                    result_copy['data'] = df.to_dict()
-                    redis_client.setex(cache_key, expire_time, json.dumps(result_copy))
-                else:
-                    redis_client.setex(cache_key, expire_time, json.dumps(result))
+                if isinstance(result, pd.DataFrame):
+                    # Convert index to strings if they are timestamps
+                    if isinstance(result.index, pd.DatetimeIndex):
+                        result.index = result.index.strftime('%Y-%m-%d')
+                    redis_client.setex(cache_key, expire_time, result.to_json())
                 return result
-                
             except redis.RedisError as e:
-                logger.error(f"Redis cache error: {str(e)}")
+                logging.error(f"Redis error in redis_cache: {str(e)}")
                 return func(*args, **kwargs)
             except Exception as e:
-                logger.error(f"Error in redis_cache: {str(e)}")
+                logging.error(f"Error in redis_cache: {str(e)}")
                 return func(*args, **kwargs)
-        
         return wrapper
     return decorator
 
