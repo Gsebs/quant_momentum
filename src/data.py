@@ -439,14 +439,24 @@ def redis_cache(expire_time=300):
 def get_stock_data(ticker, start_date, end_date):
     """Get stock data for a given ticker and date range."""
     try:
+        # Parse dates and ensure they are in the correct format
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, '%Y-%m-%d')
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, '%Y-%m-%d')
+            
         # Ensure we're not requesting future data
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now()
         if end_date > today:
             end_date = today
-            logging.info(f"Adjusted end_date to today ({today}) to avoid requesting future data")
+            logging.info(f"Adjusted end_date to today ({today.strftime('%Y-%m-%d')}) to avoid requesting future data")
         
-        logging.info(f"Fetching data for {ticker} from {start_date} to {end_date}")
-        df = yf.download(ticker, start=start_date, end=end_date)
+        # Format dates for yfinance
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = end_date.strftime('%Y-%m-%d')
+        
+        logging.info(f"Fetching data for {ticker} from {start_str} to {end_str}")
+        df = yf.download(ticker, start=start_str, end=end_str)
         
         if df.empty:
             logging.error(f"No data returned for {ticker}")
