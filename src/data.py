@@ -435,28 +435,17 @@ def redis_cache(expire_time=300):
         return wrapper
     return decorator
 
-@redis_cache(expire_time=300)
-def get_stock_data(ticker, start_date=None, end_date=None):
-    """Get stock data for a given ticker."""
+def get_stock_data(ticker):
+    """
+    Get stock data for a given ticker using yfinance.
+    """
+    logging.info(f"Fetching data for {ticker}")
     try:
-        logging.info(f"Fetching data for {ticker}")
+        # Create a Ticker object
+        stock = yf.Ticker(ticker)
         
-        # Download data with retry logic
-        for attempt in range(3):
-            try:
-                df = yf.download(
-                    ticker,
-                    period="1y",  # Get 1 year of data
-                    interval="1d",
-                    progress=False,
-                    auto_adjust=True
-                )
-                break
-            except Exception as e:
-                if attempt == 2:  # Last attempt
-                    logging.error(f"Failed to fetch data for {ticker} after 3 attempts: {str(e)}")
-                    return None
-                time.sleep(2 ** attempt)  # Exponential backoff
+        # Get historical data for the last year
+        df = stock.history(period="1y")
         
         if df.empty:
             logging.error(f"No data returned for {ticker}")
@@ -464,22 +453,22 @@ def get_stock_data(ticker, start_date=None, end_date=None):
             
         # Verify required columns exist
         required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            logging.error(f"Missing required columns for {ticker}: {missing_columns}")
-            return None
-            
-        # Add Adj Close column if not present
-        if 'Adj Close' not in df.columns:
-            df['Adj Close'] = df['Close']
-            
+        for col in required_columns:
+            if col not in df.columns:
+                logging.error(f"Missing required column {col} for {ticker}")
+                return None
+                
         # Calculate metrics
-        current_price = df['Adj Close'][-1]
+        current_price = df['Close'].iloc[-1]
         avg_volume = df['Volume'].mean()
-        price_change = ((current_price - df['Adj Close'][0]) / df['Adj Close'][0]) * 100
+        price_change = ((current_price - df['Close'].iloc[0]) / df['Close'].iloc[0]) * 100
         
-        logging.info(f"Successfully fetched data for {ticker}. Current price: {current_price:.2f}, Price change: {price_change:.2f}%, Avg volume: {avg_volume:.0f}")
-        return df
+        return {
+            'current_price': current_price,
+            'avg_volume': avg_volume,
+            'price_change': price_change,
+            'data': df
+        }
         
     except Exception as e:
         logging.error(f"Error fetching data for {ticker}: {str(e)}")

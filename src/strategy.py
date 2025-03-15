@@ -95,30 +95,26 @@ def save_signals_to_cache(signals: List[Dict]) -> None:
     except Exception as e:
         logger.error(f"Error saving signals to cache: {e}")
 
-def process_batch(tickers, batch_num, total_batches):
-    """Process a batch of tickers."""
-    logging.info(f"Processing batch {batch_num} of {total_batches}")
-    
+def process_batch(tickers):
+    """Process a batch of tickers and return their momentum scores."""
     results = []
+    
     for ticker in tickers:
         try:
-            # Get historical data
-            df = get_stock_data(ticker)
-            if df is None or df.empty:
+            data = get_stock_data(ticker)
+            if data is None:
                 logging.warning(f"No data available for {ticker}")
                 continue
                 
-            # Calculate metrics
-            momentum_score = calculate_momentum_score(df)
-            if momentum_score is None:
-                logging.warning(f"Could not calculate momentum score for {ticker}")
-                continue
-                
+            # Calculate momentum score
+            momentum_score = calculate_momentum_score(data['data'])
+            
             results.append({
                 'ticker': ticker,
-                'momentum_score': momentum_score,
-                'current_price': df['Adj Close'][-1],
-                'volume': df['Volume'][-1]
+                'current_price': data['current_price'],
+                'avg_volume': data['avg_volume'],
+                'price_change': data['price_change'],
+                'momentum_score': momentum_score
             })
             
         except Exception as e:
@@ -127,34 +123,48 @@ def process_batch(tickers, batch_num, total_batches):
             
     return results
 
-def update_signals_in_background(tickers: List[str]) -> None:
-    """Update momentum signals in the background."""
+def update_signals():
+    """Update momentum signals for all tickers."""
     try:
-        # Split tickers into batches of 10
+        # Get list of tickers
+        tickers = get_sp500_tickers()
+        if not tickers:
+            logging.error("Failed to get SP500 tickers")
+            return
+            
+        # Process tickers in batches
         batch_size = 10
-        batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
-        total_batches = len(batches)
+        all_signals = []
         
-        for batch_num, batch in enumerate(batches, 1):
+        for i in range(0, len(tickers), batch_size):
+            batch = tickers[i:i+batch_size]
             try:
                 # Process the batch
-                signals = process_batch(batch, batch_num, total_batches)
+                signals = process_batch(batch)
+                all_signals.extend(signals)
                 
-                # Cache the results
-                if signals:
-                    cache_signals(signals)
-                    
-                # Wait 30 seconds before next batch to avoid rate limiting
-                if batch_num < total_batches:
+                # Wait between batches to avoid rate limiting
+                if i + batch_size < len(tickers):
                     logging.info("Waiting 30 seconds before next batch")
                     time.sleep(30)
                     
             except Exception as e:
-                logging.error(f"Error processing batch {batch_num}: {str(e)}")
+                logging.error(f"Error processing batch: {str(e)}")
                 continue
                 
+        # Sort by momentum score
+        all_signals.sort(key=lambda x: x['momentum_score'], reverse=True)
+        
+        # Cache the results
+        try:
+            cache_signals(all_signals)
+        except Exception as e:
+            logger.error(f"Error saving signals to cache: {e}")
+            
+        return all_signals
+        
     except Exception as e:
-        logging.error(f"Error in background update: {str(e)}")
+        logging.error(f"Error in update_signals: {str(e)}")
         return None
 
 def run_strategy(tickers: List[str]) -> List[Dict]:
