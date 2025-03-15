@@ -389,31 +389,33 @@ def redis_cache(expire_time=300):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
+            # Generate cache key based on function name and arguments
+            cache_key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
+            
             try:
-                # Generate cache key based on function name and arguments
-                cache_key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
-                
                 # Try to get cached result
                 cached_result = redis_client.get(cache_key)
                 if cached_result:
-                    return json.loads(cached_result)
+                    result = json.loads(cached_result)
+                    # Convert back to DataFrame if necessary
+                    if isinstance(result, dict) and 'data' in result and isinstance(result['data'], dict):
+                        result['data'] = pd.DataFrame.from_dict(result['data'])
+                    return result
                 
                 # If no cached result, execute function
                 result = func(*args, **kwargs)
                 
-                # Convert timestamps to strings for JSON serialization
-                if isinstance(result, dict):
-                    for key, value in result.items():
-                        if isinstance(value, pd.Timestamp):
-                            result[key] = value.isoformat()
-                
-                # Cache the result
-                redis_client.setex(cache_key, expire_time, json.dumps(result))
+                # Convert DataFrame to dict for JSON serialization
+                if isinstance(result, dict) and 'data' in result and isinstance(result['data'], pd.DataFrame):
+                    result_copy = result.copy()
+                    result_copy['data'] = result['data'].to_dict()
+                    redis_client.setex(cache_key, expire_time, json.dumps(result_copy))
+                else:
+                    redis_client.setex(cache_key, expire_time, json.dumps(result))
                 return result
                 
             except redis.RedisError as e:
                 logger.error(f"Redis cache error: {str(e)}")
-                # If Redis fails, just execute the function
                 return func(*args, **kwargs)
             except Exception as e:
                 logger.error(f"Error in redis_cache: {str(e)}")
