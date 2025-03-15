@@ -381,41 +381,47 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
         return pd.DataFrame()
 
 def redis_cache(expire_time=300):
-    """
-    A decorator that implements Redis caching with error handling and automatic retry logic.
-    
-    Args:
-        expire_time (int): Time in seconds for the cache to expire. Defaults to 300 seconds (5 minutes).
-    """
+    """Redis cache decorator."""
     def decorator(func):
+        @wraps(func)
         def wrapper(*args, **kwargs):
-            # Create Redis client with SSL verification disabled
-            redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-            redis_client = redis.from_url(redis_url, ssl_cert_reqs=None, decode_responses=True)
-            
-            # Create a cache key based on function name and arguments
-            cache_key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
-            
             try:
-                # Try to get cached value
-                cached_value = redis_client.get(cache_key)
-                if cached_value:
-                    return eval(cached_value)  # Convert string back to dictionary
+                # Create Redis client
+                redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+                redis_client = redis.from_url(redis_url)
                 
-                # If no cached value, call the function
+                # Create cache key
+                cache_key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
+                
+                # Try to get from cache
+                cached_data = redis_client.get(cache_key)
+                if cached_data:
+                    return json.loads(cached_data)
+                
+                # If not in cache, execute function
                 result = func(*args, **kwargs)
                 
-                # Cache the result if it's valid
-                if result:
-                    redis_client.setex(cache_key, expire_time, str(result))
+                # Convert timestamps to strings for JSON serialization
+                if isinstance(result, dict) and 'data' in result:
+                    result['data'] = result['data'].to_dict()
+                
+                # Store in cache
+                redis_client.setex(
+                    cache_key,
+                    expire_time,
+                    json.dumps(result, default=str)
+                )
                 
                 return result
-            
-            except (redis.RedisError, Exception) as e:
+                
+            except redis.RedisError as e:
                 logger.error(f"Redis cache error: {str(e)}")
-                # If cache fails, just execute the function
                 return func(*args, **kwargs)
-            
+                
+            except Exception as e:
+                logger.error(f"Cache error: {str(e)}")
+                return func(*args, **kwargs)
+                
         return wrapper
     return decorator
 
