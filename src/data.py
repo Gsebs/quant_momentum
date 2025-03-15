@@ -29,6 +29,9 @@ import aiohttp
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from .cache import redis_cache
+import functools
+import redis
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -375,6 +378,46 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
     except Exception as e:
         logger.error(f"Error getting market data: {str(e)}")
         return pd.DataFrame()
+
+def redis_cache(expire_time=3600):
+    """
+    Redis cache decorator.
+    
+    Args:
+        expire_time (int): Cache expiration time in seconds
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Get Redis connection
+            redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+            redis_client = redis.from_url(
+                redis_url,
+                ssl_cert_reqs=None,  # Disable SSL certificate verification
+                decode_responses=True  # Decode responses to UTF-8 strings
+            )
+            
+            # Create cache key from function name and arguments
+            cache_key = f"{func.__name__}:{args}:{kwargs}"
+            
+            try:
+                # Try to get cached value
+                cached_value = redis_client.get(cache_key)
+                if cached_value:
+                    return json.loads(cached_value)
+                
+                # If not cached, execute function and cache result
+                result = func(*args, **kwargs)
+                redis_client.setex(cache_key, expire_time, json.dumps(result))
+                return result
+                
+            except Exception as e:
+                logger.error(f"Redis cache error: {str(e)}")
+                # If Redis fails, just execute the function
+                return func(*args, **kwargs)
+                
+        return wrapper
+    return decorator
 
 @redis_cache(expire_time=21600)  # Cache for 6 hours
 def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict:
