@@ -399,7 +399,9 @@ def redis_cache(expire_time=300):
                     result = json.loads(cached_result)
                     # Convert back to DataFrame if necessary
                     if isinstance(result, dict) and 'data' in result and isinstance(result['data'], dict):
-                        result['data'] = pd.DataFrame.from_dict(result['data'])
+                        df = pd.DataFrame.from_dict(result['data'])
+                        df.index = pd.to_datetime(df.index)
+                        result['data'] = df
                     return result
                 
                 # If no cached result, execute function
@@ -408,7 +410,10 @@ def redis_cache(expire_time=300):
                 # Convert DataFrame to dict for JSON serialization
                 if isinstance(result, dict) and 'data' in result and isinstance(result['data'], pd.DataFrame):
                     result_copy = result.copy()
-                    result_copy['data'] = result['data'].to_dict()
+                    df = result['data'].copy()
+                    # Convert index to string format
+                    df.index = df.index.strftime('%Y-%m-%d')
+                    result_copy['data'] = df.to_dict()
                     redis_client.setex(cache_key, expire_time, json.dumps(result_copy))
                 else:
                     redis_client.setex(cache_key, expire_time, json.dumps(result))
