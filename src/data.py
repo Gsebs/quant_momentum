@@ -428,6 +428,20 @@ def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Opti
     
     backoff = INITIAL_BACKOFF
     
+    # Convert dates to timestamps
+    start_ts = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp())
+    end_ts = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp())
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'max-age=0'
+    }
+    
     for attempt in range(MAX_RETRIES):
         try:
             # Add random delay between requests
@@ -435,53 +449,65 @@ def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Opti
             logger.info(f"Rate limiting: sleeping for {delay:.2f} seconds before requesting {ticker}")
             time.sleep(delay)
             
-            # Download data with explicit timezone handling
-            hist = yf.download(
-                ticker,
-                start=start_date,
-                end=end_date,
-                interval='1d',
-                progress=False,
-                timeout=30,
-                ignore_tz=True,  # Ignore timezone issues
-                prepost=False,  # Skip pre/post market data
-                repair=True  # Try to repair missing data
-            )
+            # Create a session for better connection reuse
+            session = requests.Session()
+            session.headers.update(headers)
             
-            if hist.empty:
+            # Yahoo Finance API URL
+            url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?symbol={ticker}&period1={start_ts}&period2={end_ts}&interval=1d'
+            
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Extract price data
+            result = data['chart']['result'][0]
+            timestamps = result['timestamp']
+            quotes = result['indicators']['quote'][0]
+            
+            # Create DataFrame
+            df = pd.DataFrame({
+                'timestamp': timestamps,
+                'Open': quotes.get('open', []),
+                'High': quotes.get('high', []),
+                'Low': quotes.get('low', []),
+                'Close': quotes.get('close', []),
+                'Volume': quotes.get('volume', [])
+            })
+            
+            # Convert timestamps to datetime
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+            df.set_index('timestamp', inplace=True)
+            
+            # Remove rows with missing data
+            df = df.dropna()
+            
+            if df.empty:
                 raise ValueError(f"No data available for {ticker}")
             
-            # Validate data quality
-            required_cols = ['Close', 'Volume']
-            if not all(col in hist.columns for col in required_cols):
-                raise ValueError(f"Missing required columns for {ticker}")
+            # Calculate metrics
+            current_price = float(df['Close'].iloc[-1])
+            avg_volume = float(df['Volume'].mean())
+            initial_price = float(df['Close'].iloc[0])
+            price_change = ((current_price - initial_price) / initial_price) * 100
             
-            if len(hist) < 2:
-                raise ValueError(f"Insufficient data points for {ticker}")
+            return {
+                'ticker': ticker,
+                'price': current_price,
+                'volume': avg_volume,
+                'price_change': price_change
+            }
             
-            # Calculate metrics with error handling
-            try:
-                current_price = float(hist['Close'].iloc[-1])
-                avg_volume = float(hist['Volume'].mean())
-                initial_price = float(hist['Close'].iloc[0])
-                price_change = ((current_price - initial_price) / initial_price) * 100
-                
-                return {
-                    'ticker': ticker,
-                    'price': current_price,
-                    'volume': avg_volume,
-                    'price_change': price_change
-                }
-            except Exception as e:
-                logger.error(f"Error calculating metrics for {ticker}: {str(e)}")
-                raise ValueError(f"Error processing data for {ticker}")
-            
-        except (RequestException, MaxRetryError) as e:
-            if "429" in str(e):  # Rate limit error
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:  # Rate limit error
                 logger.warning(f"Rate limit hit for {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {backoff} seconds")
                 time.sleep(backoff)
                 backoff = min(backoff * 2, MAX_BACKOFF)
                 continue
+            else:
+                logger.error(f"HTTP error for {ticker}: {str(e)}")
+                raise ValueError(f"HTTP error for {ticker}")
                 
         except Exception as e:
             logger.warning(f"Error fetching {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {backoff} seconds: {str(e)}")
