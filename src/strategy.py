@@ -99,20 +99,11 @@ def process_batch(tickers, batch_num, total_batches):
     """Process a batch of tickers."""
     logging.info(f"Processing batch {batch_num} of {total_batches}")
     
-    # Calculate date range for data
-    today = datetime.now()
-    end_date = (today - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    start_date = (end_date - timedelta(days=365)).replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    # Format dates as strings in YYYY-MM-DD format
-    end_date_str = end_date.strftime('%Y-%m-%d')
-    start_date_str = start_date.strftime('%Y-%m-%d')
-    
     results = []
     for ticker in tickers:
         try:
             # Get historical data
-            df = get_stock_data(ticker, start_date_str, end_date_str)
+            df = get_stock_data(ticker)
             if df is None or df.empty:
                 logging.warning(f"No data available for {ticker}")
                 continue

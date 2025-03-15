@@ -436,37 +436,27 @@ def redis_cache(expire_time=300):
     return decorator
 
 @redis_cache(expire_time=300)
-def get_stock_data(ticker, start_date, end_date):
-    """Get stock data for a given ticker and date range."""
+def get_stock_data(ticker, start_date=None, end_date=None):
+    """Get stock data for a given ticker."""
     try:
-        # Parse dates and ensure they are in the correct format
-        if isinstance(start_date, str):
-            start_date = datetime.strptime(start_date, '%Y-%m-%d')
-        if isinstance(end_date, str):
-            end_date = datetime.strptime(end_date, '%Y-%m-%d')
-            
-        # Ensure we're not requesting future data
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        if end_date >= today:
-            end_date = today - timedelta(days=1)
-            logging.info(f"Adjusted end_date to yesterday ({end_date.strftime('%Y-%m-%d')})")
+        logging.info(f"Fetching data for {ticker}")
         
-        # Format dates for yfinance
-        start_str = start_date.strftime('%Y-%m-%d')
-        end_str = end_date.strftime('%Y-%m-%d')
-        
-        logging.info(f"Fetching data for {ticker} from {start_str} to {end_str}")
-        
-        # Create a Ticker object
-        stock = yf.Ticker(ticker)
-        
-        # Get historical data
-        df = stock.history(
-            start=start_str,
-            end=end_str,
-            interval='1d',
-            auto_adjust=True
-        )
+        # Download data with retry logic
+        for attempt in range(3):
+            try:
+                df = yf.download(
+                    ticker,
+                    period="1y",  # Get 1 year of data
+                    interval="1d",
+                    progress=False,
+                    auto_adjust=True
+                )
+                break
+            except Exception as e:
+                if attempt == 2:  # Last attempt
+                    logging.error(f"Failed to fetch data for {ticker} after 3 attempts: {str(e)}")
+                    return None
+                time.sleep(2 ** attempt)  # Exponential backoff
         
         if df.empty:
             logging.error(f"No data returned for {ticker}")
