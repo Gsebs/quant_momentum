@@ -98,20 +98,28 @@ def save_signals_to_cache(signals: List[Dict]) -> None:
 def process_batch(batch: List[str]) -> List[Dict]:
     """Process a batch of tickers and return their momentum signals."""
     signals = []
+    
+    # Calculate date range for data
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')  # 1 year of data
+    
     for ticker in batch:
         try:
-            # Get stock data
-            stock_data = get_stock_data(ticker)
+            # Get stock data with date range
+            stock_data = get_stock_data(ticker, start_date=start_date, end_date=end_date)
             
-            # Extract metrics
-            signal = {
-                'ticker': ticker,
-                'price': stock_data['current_price'],
-                'volume': stock_data['avg_volume'],
-                'momentum_score': stock_data['price_change'],
-                'timestamp': datetime.now().isoformat()
-            }
-            signals.append(signal)
+            if stock_data is not None and not stock_data.empty:
+                # Extract metrics
+                signal = {
+                    'ticker': ticker,
+                    'price': stock_data['Adj Close'][-1],
+                    'volume': stock_data['Volume'].mean(),
+                    'momentum_score': ((stock_data['Adj Close'][-1] - stock_data['Adj Close'][0]) / stock_data['Adj Close'][0]) * 100,
+                    'timestamp': datetime.now().isoformat()
+                }
+                signals.append(signal)
+            else:
+                logger.warning(f"No data available for {ticker}")
             
         except RetryableError as e:
             logger.warning(f"Retryable error for {ticker}: {str(e)}")
