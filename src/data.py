@@ -444,8 +444,18 @@ def get_stock_data(ticker):
         # Create a Ticker object
         stock = yf.Ticker(ticker)
         
+        # Verify the symbol exists by getting basic info
+        try:
+            info = stock.info
+            if not info:
+                logging.error(f"No info available for {ticker}")
+                return None
+        except Exception as e:
+            logging.error(f"Error getting info for {ticker}: {str(e)}")
+            return None
+            
         # Get historical data for the last year
-        df = stock.history(period="1y")
+        df = stock.history(period="1y", interval="1d")
         
         if df.empty:
             logging.error(f"No data returned for {ticker}")
@@ -463,6 +473,7 @@ def get_stock_data(ticker):
         avg_volume = df['Volume'].mean()
         price_change = ((current_price - df['Close'].iloc[0]) / df['Close'].iloc[0]) * 100
         
+        logging.info(f"Successfully fetched data for {ticker}")
         return {
             'current_price': current_price,
             'avg_volume': avg_volume,
