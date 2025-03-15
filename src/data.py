@@ -435,14 +435,27 @@ def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Opti
             logger.info(f"Rate limiting: sleeping for {delay:.2f} seconds before requesting {ticker}")
             time.sleep(delay)
             
-            # Download data directly
+            # Create a Ticker object first to validate
+            stock = yf.Ticker(ticker)
+            
+            # Try to get basic info first
+            try:
+                info = stock.info
+                if not info:
+                    raise ValueError(f"No info available for {ticker}")
+            except Exception as e:
+                logger.warning(f"Could not get info for {ticker}: {str(e)}")
+                # Continue even if info is not available
+            
+            # Download data with explicit timezone handling
             hist = yf.download(
                 ticker,
                 start=start_date,
                 end=end_date,
                 interval='1d',
                 progress=False,
-                timeout=30
+                timeout=30,
+                ignore_tz=True  # Ignore timezone issues
             )
             
             if hist.empty:
