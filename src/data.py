@@ -470,12 +470,6 @@ def get_stock_data(ticker, start_date, end_date):
         
         logging.info(f"Fetching data for {ticker} from {start_str} to {end_str}")
         
-        # Create a session with headers
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        })
-        
         # Download data with retry logic
         for attempt in range(3):
             try:
@@ -483,8 +477,7 @@ def get_stock_data(ticker, start_date, end_date):
                     ticker,
                     start=start_str,
                     end=end_str,
-                    progress=False,
-                    session=session
+                    progress=False
                 )
                 break
             except Exception as e:
