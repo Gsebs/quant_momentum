@@ -447,16 +447,51 @@ def get_stock_data(ticker, start_date, end_date):
             
         # Ensure we're not requesting future data
         today = datetime.now()
-        if end_date > today:
-            end_date = today
-            logging.info(f"Adjusted end_date to today ({today.strftime('%Y-%m-%d')}) to avoid requesting future data")
+        
+        # Get the most recent business day
+        most_recent = today
+        while most_recent.weekday() > 4:  # 5 is Saturday, 6 is Sunday
+            most_recent = most_recent - timedelta(days=1)
+            
+        # If it's before market open (9:30 AM EST), use previous business day
+        market_open = most_recent.replace(hour=9, minute=30, second=0, microsecond=0)
+        if today < market_open:
+            most_recent = most_recent - timedelta(days=1)
+            while most_recent.weekday() > 4:
+                most_recent = most_recent - timedelta(days=1)
+        
+        if end_date > most_recent:
+            end_date = most_recent
+            logging.info(f"Adjusted end_date to most recent business day ({end_date.strftime('%Y-%m-%d')})")
         
         # Format dates for yfinance
         start_str = start_date.strftime('%Y-%m-%d')
         end_str = end_date.strftime('%Y-%m-%d')
         
         logging.info(f"Fetching data for {ticker} from {start_str} to {end_str}")
-        df = yf.download(ticker, start=start_str, end=end_str)
+        
+        # Create a session with headers
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
+        
+        # Download data with retry logic
+        for attempt in range(3):
+            try:
+                df = yf.download(
+                    ticker,
+                    start=start_str,
+                    end=end_str,
+                    progress=False,
+                    session=session
+                )
+                break
+            except Exception as e:
+                if attempt == 2:  # Last attempt
+                    logging.error(f"Failed to fetch data for {ticker} after 3 attempts: {str(e)}")
+                    return None
+                time.sleep(2 ** attempt)  # Exponential backoff
         
         if df.empty:
             logging.error(f"No data returned for {ticker}")

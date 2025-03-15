@@ -101,13 +101,30 @@ def process_batch(batch: List[str]) -> List[Dict]:
     
     # Calculate date range for data (use historical data)
     today = datetime.now()
-    end_date = (today - timedelta(days=1)).strftime('%Y-%m-%d')  # Use yesterday as end date
-    start_date = (today - timedelta(days=366)).strftime('%Y-%m-%d')  # 1 year of historical data
+    
+    # Get the most recent business day
+    end_date = today
+    while end_date.weekday() > 4:  # 5 is Saturday, 6 is Sunday
+        end_date = end_date - timedelta(days=1)
+        
+    # If it's before market open (9:30 AM EST), use previous business day
+    market_open = end_date.replace(hour=9, minute=30, second=0, microsecond=0)
+    if today < market_open:
+        end_date = end_date - timedelta(days=1)
+        while end_date.weekday() > 4:
+            end_date = end_date - timedelta(days=1)
+    
+    # Calculate start date (1 year ago)
+    start_date = end_date - timedelta(days=365)
+    
+    # Format dates
+    end_date_str = end_date.strftime('%Y-%m-%d')
+    start_date_str = start_date.strftime('%Y-%m-%d')
     
     for ticker in batch:
         try:
             # Get stock data with date range
-            stock_data = get_stock_data(ticker, start_date=start_date, end_date=end_date)
+            stock_data = get_stock_data(ticker, start_date=start_date_str, end_date=end_date_str)
             
             if stock_data is not None and not stock_data.empty:
                 # Extract metrics
