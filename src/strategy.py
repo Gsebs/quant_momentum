@@ -88,44 +88,6 @@ def save_to_cache(ticker: str, data: pd.DataFrame) -> None:
     except Exception as e:
         logger.warning(f"Error saving cache for {ticker}: {str(e)}")
 
-def get_stock_data(ticker: str, start_date: str, end_date: str, max_retries: int = 3, timeout: int = 10) -> Optional[pd.DataFrame]:
-    """
-    Get stock data with retries, timeout, and caching.
-    
-    Args:
-        ticker: Stock ticker symbol
-        start_date: Start date in YYYY-MM-DD format
-        end_date: End date in YYYY-MM-DD format
-        max_retries: Maximum number of retry attempts
-        timeout: Timeout in seconds for each attempt
-        
-    Returns:
-        DataFrame with stock data or None if failed
-    """
-    # Try to get from cache first
-    cached_data = get_cached_data(ticker, start_date, end_date)
-    if cached_data is not None:
-        return cached_data
-        
-    for attempt in range(max_retries):
-        try:
-            stock = yf.Ticker(ticker)
-            data = stock.history(start=start_date, end=end_date, timeout=timeout)
-            if not data.empty:
-                # Save successful response to cache
-                save_to_cache(ticker, data)
-                return data
-        except (requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
-            if attempt == max_retries - 1:
-                logger.warning(f"Failed to get data for {ticker} after {max_retries} attempts: {str(e)}")
-            else:
-                # Exponential backoff between retries
-                time.sleep((attempt + 1) * 2)
-        except Exception as e:
-            logger.warning(f"Error getting data for {ticker}: {str(e)}")
-            break
-    return None
-
 def get_date_str(date: datetime) -> str:
     """Just converts a date to YYYY-MM-DD format"""
     return date.strftime("%Y-%m-%d")
