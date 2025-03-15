@@ -5,12 +5,19 @@ from datetime import timedelta
 from functools import wraps
 import json
 import logging
+import numpy as np
+import pandas as pd
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 # Initialize Redis connection
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
-redis_client = redis.from_url(REDIS_URL, ssl_cert_reqs=None)  # Disable SSL certificate verification
+redis_client = redis.from_url(
+    REDIS_URL,
+    ssl_cert_reqs=None,  # Disable SSL certificate verification
+    decode_responses=True  # Decode responses to UTF-8 strings
+)
 
 # Initialize requests-cache for Yahoo Finance API calls
 requests_cache.install_cache(
@@ -19,13 +26,55 @@ requests_cache.install_cache(
     expire_after=timedelta(hours=6)
 )
 
-def cache_key(*args, **kwargs):
+def serialize_value(value: Any) -> str:
+    """Serialize value for Redis storage."""
+    if isinstance(value, pd.DataFrame):
+        return json.dumps({
+            'type': 'dataframe',
+            'data': value.to_dict(orient='split')
+        })
+    elif isinstance(value, np.ndarray):
+        return json.dumps({
+            'type': 'ndarray',
+            'data': value.tolist()
+        })
+    elif isinstance(value, (dict, list)):
+        return json.dumps({
+            'type': 'json',
+            'data': value
+        })
+    else:
+        return json.dumps({
+            'type': 'primitive',
+            'data': value
+        })
+
+def deserialize_value(value_str: str) -> Any:
+    """Deserialize value from Redis storage."""
+    try:
+        value_dict = json.loads(value_str)
+        value_type = value_dict.get('type')
+        value_data = value_dict.get('data')
+
+        if value_type == 'dataframe':
+            return pd.DataFrame(**value_data)
+        elif value_type == 'ndarray':
+            return np.array(value_data)
+        elif value_type == 'json':
+            return value_data
+        else:
+            return value_data
+    except Exception as e:
+        logger.error(f"Error deserializing value: {str(e)}")
+        return None
+
+def cache_key(*args, **kwargs) -> str:
     """Generate a cache key from function arguments."""
     key_parts = [str(arg) for arg in args]
     key_parts.extend(f"{k}:{v}" for k, v in sorted(kwargs.items()))
     return ":".join(key_parts)
 
-def redis_cache(expire_time=3600):
+def redis_cache(expire_time: int = 3600):
     """Redis caching decorator with expiration time in seconds."""
     def decorator(func):
         @wraps(func)
@@ -37,12 +86,22 @@ def redis_cache(expire_time=3600):
                 cached_result = redis_client.get(key)
                 if cached_result:
                     logger.info(f"Cache hit for {key}")
-                    return json.loads(cached_result)
+                    result = deserialize_value(cached_result)
+                    if result is not None:
+                        return result
+                    logger.warning(f"Could not deserialize cached value for {key}")
                 
-                # If not in cache, execute function and cache result
+                # If not in cache or deserialization failed, execute function
                 result = func(*args, **kwargs)
-                redis_client.setex(key, expire_time, json.dumps(result))
-                logger.info(f"Cache miss for {key}, stored new result")
+                
+                # Cache the result
+                try:
+                    serialized_result = serialize_value(result)
+                    redis_client.setex(key, expire_time, serialized_result)
+                    logger.info(f"Cache miss for {key}, stored new result")
+                except Exception as e:
+                    logger.warning(f"Failed to cache result for {key}: {str(e)}")
+                
                 return result
                 
             except redis.RedisError as e:
@@ -56,7 +115,7 @@ def redis_cache(expire_time=3600):
         return wrapper
     return decorator
 
-def clear_cache():
+def clear_cache() -> None:
     """Clear all cached data."""
     try:
         redis_client.flushall()

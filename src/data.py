@@ -39,20 +39,19 @@ logger = logging.getLogger(__name__)
 Path("data/cache").mkdir(parents=True, exist_ok=True)
 
 # Constants for rate limiting
-MIN_DELAY = 2.0  # Minimum delay between requests
-MAX_DELAY = 5.0  # Maximum delay between requests
-MAX_RETRIES = 3  # Maximum number of retries per request
-BATCH_SIZE = 3   # Number of tickers to process in each batch
+MIN_DELAY = 5.0  # Minimum delay between requests (increased)
+MAX_DELAY = 30.0  # Maximum delay between requests (increased)
+MAX_RETRIES = 5  # Maximum number of retries per request (increased)
+BATCH_SIZE = 2   # Number of tickers to process in each batch (reduced)
 
 # Test mode tickers (reduced set for development)
 RELIABLE_TICKERS = ['AAPL', 'MSFT', 'GOOGL']
 
 # Global rate limiter
 last_request_time = {}
-MIN_REQUEST_INTERVAL = 5.0  # seconds between requests per ticker
-BASE_DELAY = 10.0  # increased base delay for exponential backoff
-MAX_DELAY = 20.0  # reduced max delay due to Heroku timeout
-CACHE_DURATION = timedelta(hours=12)  # increased cache duration
+MIN_REQUEST_INTERVAL = 10.0  # seconds between requests per ticker (increased)
+BASE_DELAY = 15.0  # increased base delay for exponential backoff
+CACHE_DURATION = timedelta(hours=12)
 
 # User agent headers with more realistic browser info
 HEADERS = {
@@ -422,7 +421,7 @@ def redis_cache(expire_time=3600):
 @redis_cache(expire_time=21600)  # Cache for 6 hours
 def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict:
     """
-    Get stock data for a given ticker.
+    Get stock data for a given ticker with improved rate limiting and error handling.
     
     Args:
         ticker (str): Stock ticker symbol
@@ -438,39 +437,104 @@ def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Opti
             end_date = datetime.now().strftime('%Y-%m-%d')
             start_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         
-        # Get stock info
-        stock = yf.Ticker(ticker)
-        info = stock.info
+        # Enforce rate limiting with jitter
+        current_time = time.time()
+        if ticker in last_request_time:
+            elapsed = current_time - last_request_time[ticker]
+            if elapsed < MIN_REQUEST_INTERVAL:
+                jitter = random.uniform(0.1, 1.0)
+                sleep_time = MIN_REQUEST_INTERVAL - elapsed + jitter
+                logger.info(f"Rate limiting: sleeping for {sleep_time:.2f} seconds before requesting {ticker}")
+                time.sleep(sleep_time)
         
-        # Get historical data
-        hist = stock.history(start=start_date, end=end_date)
+        # Update last request time
+        last_request_time[ticker] = time.time()
         
-        if hist.empty:
-            # If no historical data, use info data
-            return {
-                'ticker': ticker,
-                'price': info.get('regularMarketPrice', 0),
-                'volume': info.get('regularMarketVolume', 0),
-                'price_change': info.get('regularMarketChangePercent', 0)
-            }
+        # Create session with headers
+        session = requests.Session()
+        session.headers.update(HEADERS)
         
-        # Calculate price change
-        price_change = ((hist['Close'].iloc[-1] - hist['Close'].iloc[0]) / hist['Close'].iloc[0]) * 100
+        # Initialize stock object
+        stock = yf.Ticker(ticker, session=session)
         
-        return {
-            'ticker': ticker,
-            'price': hist['Close'].iloc[-1],
-            'volume': hist['Volume'].iloc[-1],
-            'price_change': price_change
-        }
-        
+        # Implement exponential backoff with retries
+        for attempt in range(MAX_RETRIES):
+            try:
+                # Get stock info first
+                info = stock.info
+                if not info:
+                    logger.warning(f"No info available for {ticker}")
+                    raise ValueError(f"No info available for {ticker}")
+                
+                # Get historical data
+                hist = stock.history(
+                    start=start_date,
+                    end=end_date,
+                    interval='1d',
+                    auto_adjust=True,
+                    timeout=30
+                )
+                
+                if hist.empty:
+                    # If no historical data, use info data
+                    return {
+                        'ticker': ticker,
+                        'price': info.get('regularMarketPrice', 0),
+                        'volume': info.get('regularMarketVolume', 0),
+                        'price_change': info.get('regularMarketChangePercent', 0)
+                    }
+                
+                # Calculate price change
+                price_change = ((hist['Close'].iloc[-1] - hist['Close'].iloc[0]) / hist['Close'].iloc[0]) * 100
+                
+                return {
+                    'ticker': ticker,
+                    'price': hist['Close'].iloc[-1],
+                    'volume': hist['Volume'].iloc[-1],
+                    'price_change': price_change
+                }
+                
+            except requests.exceptions.HTTPError as e:
+                if "429" in str(e):
+                    if attempt < MAX_RETRIES - 1:
+                        # Calculate delay with exponential backoff and jitter
+                        jitter = random.uniform(0.1, 1.0)
+                        delay = min(BASE_DELAY * (2 ** attempt) + jitter, MAX_DELAY)
+                        logger.warning(f"Rate limit hit for {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {delay:.2f} seconds")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        logger.error(f"Max retries reached for {ticker} due to rate limiting")
+                        raise ValueError(f"Rate limit exceeded for {ticker}")
+                else:
+                    logger.error(f"HTTP error for {ticker}: {str(e)}")
+                    raise ValueError(f"HTTP error for {ticker}")
+                    
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:
+                    # Calculate delay with exponential backoff and jitter
+                    jitter = random.uniform(0.1, 1.0)
+                    delay = min(BASE_DELAY * (2 ** attempt) + jitter, MAX_DELAY)
+                    logger.warning(f"Error fetching {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {delay:.2f} seconds: {str(e)}")
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"Failed to fetch data for {ticker} after {MAX_RETRIES} attempts: {str(e)}")
+                    raise ValueError(f"Could not fetch data for {ticker}")
+                    
     except Exception as e:
         logger.error(f"Error fetching data for {ticker}: {str(e)}")
         raise ValueError(f"Could not fetch data for {ticker}")
 
-def get_batch_data(tickers):
+def get_batch_data(tickers: List[str]) -> List[Dict]:
     """
-    Process tickers in batches with rate limiting.
+    Process tickers in batches with improved rate limiting.
+    
+    Args:
+        tickers: List of stock ticker symbols
+        
+    Returns:
+        List of dictionaries containing stock data
     """
     results = []
     num_batches = (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE
@@ -491,10 +555,11 @@ def get_batch_data(tickers):
                 logger.error(f"Error processing {ticker}: {str(e)}")
                 continue
         
-        # Add delay between batches
+        # Add longer delay between batches with jitter
         if i < num_batches - 1:
-            delay = random.uniform(MIN_DELAY * 2, MAX_DELAY * 2)
-            logger.info(f"Waiting {delay:.2f} seconds before next batch")
+            jitter = random.uniform(0.1, 1.0)
+            delay = random.uniform(MIN_DELAY * 3, MAX_DELAY * 2) + jitter
+            logger.info(f"Batch complete. Waiting {delay:.2f} seconds before next batch")
             time.sleep(delay)
     
     return results
