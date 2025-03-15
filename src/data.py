@@ -74,6 +74,10 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
 
+# Initialize Redis client with SSL verification disabled
+redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+redis_client = redis.from_url(redis_url, ssl_cert_reqs=None)
+
 def get_sp500_tickers() -> List[str]:
     """Get list of S&P 500 tickers."""
     try:
@@ -386,42 +390,35 @@ def redis_cache(expire_time=300):
         @wraps(func)
         def wrapper(*args, **kwargs):
             try:
-                # Create Redis client
-                redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-                redis_client = redis.from_url(redis_url)
-                
-                # Create cache key
+                # Generate cache key based on function name and arguments
                 cache_key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
                 
-                # Try to get from cache
-                cached_data = redis_client.get(cache_key)
-                if cached_data:
-                    return json.loads(cached_data)
+                # Try to get cached result
+                cached_result = redis_client.get(cache_key)
+                if cached_result:
+                    return json.loads(cached_result)
                 
-                # If not in cache, execute function
+                # If no cached result, execute function
                 result = func(*args, **kwargs)
                 
                 # Convert timestamps to strings for JSON serialization
-                if isinstance(result, dict) and 'data' in result:
-                    result['data'] = result['data'].to_dict()
+                if isinstance(result, dict):
+                    for key, value in result.items():
+                        if isinstance(value, pd.Timestamp):
+                            result[key] = value.isoformat()
                 
-                # Store in cache
-                redis_client.setex(
-                    cache_key,
-                    expire_time,
-                    json.dumps(result, default=str)
-                )
-                
+                # Cache the result
+                redis_client.setex(cache_key, expire_time, json.dumps(result))
                 return result
                 
             except redis.RedisError as e:
                 logger.error(f"Redis cache error: {str(e)}")
+                # If Redis fails, just execute the function
                 return func(*args, **kwargs)
-                
             except Exception as e:
-                logger.error(f"Cache error: {str(e)}")
+                logger.error(f"Error in redis_cache: {str(e)}")
                 return func(*args, **kwargs)
-                
+        
         return wrapper
     return decorator
 
