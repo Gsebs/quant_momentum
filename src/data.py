@@ -32,6 +32,8 @@ from .cache import redis_cache
 import functools
 import redis
 import json
+from urllib3.exceptions import MaxRetryError
+from requests.exceptions import RequestException
 
 logger = logging.getLogger(__name__)
 
@@ -378,153 +380,107 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
         logger.error(f"Error getting market data: {str(e)}")
         return pd.DataFrame()
 
-def redis_cache(expire_time=3600):
+def redis_cache(expire_time=300):
     """
-    Redis cache decorator.
+    A decorator that implements Redis caching with error handling and automatic retry logic.
     
     Args:
-        expire_time (int): Cache expiration time in seconds
+        expire_time (int): Time in seconds for the cache to expire. Defaults to 300 seconds (5 minutes).
     """
     def decorator(func):
-        @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # Get Redis connection
+            # Create Redis client with SSL verification disabled
             redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-            redis_client = redis.from_url(
-                redis_url,
-                ssl_cert_reqs=None,  # Disable SSL certificate verification
-                decode_responses=True  # Decode responses to UTF-8 strings
-            )
+            redis_client = redis.from_url(redis_url, ssl_cert_reqs=None, decode_responses=True)
             
-            # Create cache key from function name and arguments
-            cache_key = f"{func.__name__}:{args}:{kwargs}"
+            # Create a cache key based on function name and arguments
+            cache_key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
             
             try:
                 # Try to get cached value
                 cached_value = redis_client.get(cache_key)
                 if cached_value:
-                    return json.loads(cached_value)
+                    return eval(cached_value)  # Convert string back to dictionary
                 
-                # If not cached, execute function and cache result
+                # If no cached value, call the function
                 result = func(*args, **kwargs)
-                redis_client.setex(cache_key, expire_time, json.dumps(result))
+                
+                # Cache the result if it's valid
+                if result:
+                    redis_client.setex(cache_key, expire_time, str(result))
+                
                 return result
-                
-            except Exception as e:
+            
+            except (redis.RedisError, Exception) as e:
                 logger.error(f"Redis cache error: {str(e)}")
-                # If Redis fails, just execute the function
+                # If cache fails, just execute the function
                 return func(*args, **kwargs)
-                
+            
         return wrapper
     return decorator
 
 @redis_cache(expire_time=21600)  # Cache for 6 hours
-def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict:
+def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """
-    Get stock data for a given ticker with improved rate limiting and error handling.
+    Fetch stock data with improved error handling and rate limiting.
     
     Args:
         ticker (str): Stock ticker symbol
-        start_date (str, optional): Start date for historical data (YYYY-MM-DD)
-        end_date (str, optional): End date for historical data (YYYY-MM-DD)
-        
+        start_date (str, optional): Start date in YYYY-MM-DD format
+        end_date (str, optional): End date in YYYY-MM-DD format
+    
     Returns:
-        Dict: Dictionary containing stock data
+        dict: Dictionary containing ticker, price, volume, and price_change
     """
-    try:
-        # If dates not provided, use last trading day
-        if not start_date or not end_date:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        
-        # Enforce rate limiting with jitter
-        current_time = time.time()
-        if ticker in last_request_time:
-            elapsed = current_time - last_request_time[ticker]
-            if elapsed < MIN_REQUEST_INTERVAL:
-                jitter = random.uniform(0.1, 1.0)
-                sleep_time = MIN_REQUEST_INTERVAL - elapsed + jitter
-                logger.info(f"Rate limiting: sleeping for {sleep_time:.2f} seconds before requesting {ticker}")
-                time.sleep(sleep_time)
-        
-        # Update last request time
-        last_request_time[ticker] = time.time()
-        
-        # Create session with headers
-        session = requests.Session()
-        session.headers.update(HEADERS)
-        
-        # Initialize stock object
-        stock = yf.Ticker(ticker, session=session)
-        
-        # Implement exponential backoff with retries
-        for attempt in range(MAX_RETRIES):
-            try:
-                # Get stock info first
-                info = stock.info
-                if not info:
-                    logger.warning(f"No info available for {ticker}")
-                    raise ValueError(f"No info available for {ticker}")
+    if not start_date:
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+    
+    backoff = INITIAL_BACKOFF
+    for attempt in range(MAX_RETRIES):
+        try:
+            # Add random delay between requests
+            delay = random.uniform(MIN_DELAY, MAX_DELAY)
+            logger.info(f"Rate limiting: sleeping for {delay:.2f} seconds before requesting {ticker}")
+            time.sleep(delay)
+            
+            # Fetch stock data
+            stock = yf.Ticker(ticker)
+            hist = stock.history(start=start_date, end=end_date)
+            
+            if hist.empty:
+                raise ValueError(f"No data available for {ticker}")
+            
+            # Calculate metrics
+            current_price = hist['Close'].iloc[-1]
+            avg_volume = hist['Volume'].mean()
+            price_change = ((current_price - hist['Close'].iloc[0]) / hist['Close'].iloc[0]) * 100
+            
+            return {
+                'ticker': ticker,
+                'price': float(current_price),
+                'volume': float(avg_volume),
+                'price_change': float(price_change)
+            }
+            
+        except (RequestException, MaxRetryError) as e:
+            if "429" in str(e):  # Rate limit error
+                logger.warning(f"Rate limit hit for {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {backoff} seconds")
+                time.sleep(backoff)
+                backoff = min(backoff * 2, MAX_BACKOFF)  # Exponential backoff
+                continue
                 
-                # Get historical data
-                hist = stock.history(
-                    start=start_date,
-                    end=end_date,
-                    interval='1d',
-                    auto_adjust=True,
-                    timeout=30
-                )
-                
-                if hist.empty:
-                    # If no historical data, use info data
-                    return {
-                        'ticker': ticker,
-                        'price': info.get('regularMarketPrice', 0),
-                        'volume': info.get('regularMarketVolume', 0),
-                        'price_change': info.get('regularMarketChangePercent', 0)
-                    }
-                
-                # Calculate price change
-                price_change = ((hist['Close'].iloc[-1] - hist['Close'].iloc[0]) / hist['Close'].iloc[0]) * 100
-                
-                return {
-                    'ticker': ticker,
-                    'price': hist['Close'].iloc[-1],
-                    'volume': hist['Volume'].iloc[-1],
-                    'price_change': price_change
-                }
-                
-            except requests.exceptions.HTTPError as e:
-                if "429" in str(e):
-                    if attempt < MAX_RETRIES - 1:
-                        # Calculate delay with exponential backoff and jitter
-                        jitter = random.uniform(0.1, 1.0)
-                        delay = min(BASE_DELAY * (2 ** attempt) + jitter, MAX_DELAY)
-                        logger.warning(f"Rate limit hit for {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {delay:.2f} seconds")
-                        time.sleep(delay)
-                        continue
-                    else:
-                        logger.error(f"Max retries reached for {ticker} due to rate limiting")
-                        raise ValueError(f"Rate limit exceeded for {ticker}")
-                else:
-                    logger.error(f"HTTP error for {ticker}: {str(e)}")
-                    raise ValueError(f"HTTP error for {ticker}")
-                    
-            except Exception as e:
-                if attempt < MAX_RETRIES - 1:
-                    # Calculate delay with exponential backoff and jitter
-                    jitter = random.uniform(0.1, 1.0)
-                    delay = min(BASE_DELAY * (2 ** attempt) + jitter, MAX_DELAY)
-                    logger.warning(f"Error fetching {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {delay:.2f} seconds: {str(e)}")
-                    time.sleep(delay)
-                    continue
-                else:
-                    logger.error(f"Failed to fetch data for {ticker} after {MAX_RETRIES} attempts: {str(e)}")
-                    raise ValueError(f"Could not fetch data for {ticker}")
-                    
-    except Exception as e:
-        logger.error(f"Error fetching data for {ticker}: {str(e)}")
-        raise ValueError(f"Could not fetch data for {ticker}")
+        except Exception as e:
+            logger.warning(f"Error fetching {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {backoff} seconds: {str(e)}")
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(backoff)
+                backoff = min(backoff * 2, MAX_BACKOFF)
+                continue
+            else:
+                logger.error(f"Failed to fetch data for {ticker} after {MAX_RETRIES} attempts: {str(e)}")
+                raise ValueError(f"Could not fetch data for {ticker}")
+    
+    raise ValueError(f"Could not fetch data for {ticker} after {MAX_RETRIES} attempts")
 
 def get_batch_data(tickers: List[str]) -> List[Dict]:
     """

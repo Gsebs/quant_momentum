@@ -61,8 +61,11 @@ RELIABLE_TICKERS = [
     'WMT', 'PG', 'MA', 'HD', 'UNH', 'BAC', 'XOM', 'PFE', 'CSCO', 'VZ'
 ]
 
-# Number of tickers to process in each batch
-BATCH_SIZE = 2
+# Constants
+BATCH_SIZE = 2  # Reduced batch size
+BATCH_DELAY = 30  # Delay between batches in seconds
+CACHE_KEY = "momentum_signals"
+CACHE_EXPIRY = 300  # 5 minutes
 
 # Redis client for caching
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
@@ -72,85 +75,86 @@ redis_client = redis.from_url(
     decode_responses=True
 )
 
-def get_cached_signals() -> List[Dict]:
+def get_cached_signals() -> Optional[List[Dict]]:
     """Get cached momentum signals."""
     try:
-        cached = redis_client.get('momentum_signals')
-        if cached:
-            return json.loads(cached)
+        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+        redis_client = redis.from_url(redis_url, ssl_cert_reqs=None, decode_responses=True)
+        cached = redis_client.get(CACHE_KEY)
+        return eval(cached) if cached else None
     except Exception as e:
-        logger.error(f"Error getting cached signals: {str(e)}")
-    return []
+        logger.error(f"Error getting cached signals: {e}")
+        return None
 
 def save_signals_to_cache(signals: List[Dict]) -> None:
     """Save momentum signals to cache."""
     try:
-        redis_client.setex('momentum_signals', 300, json.dumps(signals))  # Cache for 5 minutes
+        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+        redis_client = redis.from_url(redis_url, ssl_cert_reqs=None, decode_responses=True)
+        redis_client.setex(CACHE_KEY, CACHE_EXPIRY, str(signals))
     except Exception as e:
-        logger.error(f"Error saving signals to cache: {str(e)}")
+        logger.error(f"Error saving signals to cache: {e}")
 
-def process_ticker_batch(batch: List[str], results: List[Dict]) -> None:
-    """Process a batch of tickers and update results."""
-    for ticker in batch:
+def process_ticker_batch(tickers: List[str], results: List[Dict]) -> None:
+    """Process a batch of tickers and append results."""
+    for ticker in tickers:
         try:
             data = get_stock_data(ticker)
-            if data and 'price_change' in data:
-                momentum_score = calculate_momentum_score(data)
-                results.append({
-                    'ticker': ticker,
-                    'momentum_score': momentum_score,
-                    'price': data.get('price', 0),
-                    'volume': data.get('volume', 0),
-                    'price_change': data.get('price_change', 0)
-                })
+            if data:
+                results.append(data)
         except Exception as e:
-            logger.error(f"Error processing ticker {ticker}: {str(e)}")
+            logger.error(f"Error processing {ticker}: {e}")
 
-def update_signals_in_background() -> None:
+def update_signals_in_background(tickers: List[str]) -> None:
     """Update momentum signals in background thread."""
     try:
-        logger.info(f"Starting background update of {len(RELIABLE_TICKERS)} tickers")
         results = []
         
-        # Process tickers in batches
-        for i in range(0, len(RELIABLE_TICKERS), BATCH_SIZE):
-            batch = RELIABLE_TICKERS[i:i + BATCH_SIZE]
+        # Process tickers in small batches with delays
+        for i in range(0, len(tickers), BATCH_SIZE):
+            batch = tickers[i:i + BATCH_SIZE]
+            logger.info(f"Processing batch {(i//BATCH_SIZE)+1} of {(len(tickers)-1)//BATCH_SIZE + 1}")
+            
             process_ticker_batch(batch, results)
             
             # Add delay between batches
-            if i + BATCH_SIZE < len(RELIABLE_TICKERS):
-                time.sleep(5)  # 5 second delay between batches
+            if i + BATCH_SIZE < len(tickers):
+                logger.info(f"Waiting {BATCH_DELAY} seconds before next batch")
+                time.sleep(BATCH_DELAY)
         
-        # Sort by momentum score
-        sorted_data = sorted(results, key=lambda x: x['momentum_score'], reverse=True)
-        
-        # Save to cache
-        save_signals_to_cache(sorted_data)
-        logger.info(f"Background update completed with {len(sorted_data)} signals")
+        # Sort results by price change
+        if results:
+            results.sort(key=lambda x: x['price_change'], reverse=True)
+            save_signals_to_cache(results)
+            logger.info(f"Successfully updated {len(results)} momentum signals")
         
     except Exception as e:
-        logger.error(f"Error in background update: {str(e)}")
+        logger.error(f"Error in background update: {e}")
 
-def run_strategy() -> List[Dict]:
+def run_strategy(tickers: List[str]) -> List[Dict]:
     """
-    Run the momentum strategy and return a list of stock recommendations.
-    Returns cached data immediately and updates in background.
+    Run momentum strategy with background processing and caching.
+    
+    Args:
+        tickers (List[str]): List of stock tickers
+    
+    Returns:
+        List[Dict]: List of dictionaries containing momentum signals
     """
-    try:
-        # Get cached signals first
-        signals = get_cached_signals()
-        
-        # Start background update if no cached data or cache is old
-        if not signals:
-            logger.info("No cached signals found, starting background update")
-            threading.Thread(target=update_signals_in_background).start()
-            return []
-            
-        return signals
-        
-    except Exception as e:
-        logger.error(f"Error in run_strategy: {str(e)}")
-        return []
+    # Try to get cached signals first
+    cached_signals = get_cached_signals()
+    if cached_signals:
+        logger.info("Returning cached signals")
+        return cached_signals
+    
+    # Start background update if no cached data
+    logger.info("No cached signals found, starting background update")
+    thread = threading.Thread(target=update_signals_in_background, args=(tickers,))
+    thread.daemon = True
+    thread.start()
+    
+    # Return empty list while update is in progress
+    return []
 
 def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """Get data from cache if available and not expired."""
