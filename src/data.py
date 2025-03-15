@@ -41,9 +41,9 @@ logger = logging.getLogger(__name__)
 Path("data/cache").mkdir(parents=True, exist_ok=True)
 
 # Constants for rate limiting
-MIN_DELAY = 30.0  # Minimum delay between requests
-MAX_DELAY = 60.0  # Maximum delay between requests
-MAX_RETRIES = 3   # Maximum number of retries per request
+MIN_DELAY = 60.0  # Minimum delay between requests
+MAX_DELAY = 120.0  # Maximum delay between requests
+MAX_RETRIES = 5   # Maximum number of retries per request
 BATCH_SIZE = 1    # Process one ticker at a time
 
 # Test mode tickers (reduced set for development)
@@ -51,13 +51,13 @@ RELIABLE_TICKERS = ['AAPL', 'MSFT', 'GOOGL']
 
 # Global rate limiter
 last_request_time = {}
-MIN_REQUEST_INTERVAL = 30.0  # seconds between requests per ticker
-BASE_DELAY = 30.0  # base delay for exponential backoff
+MIN_REQUEST_INTERVAL = 60.0  # seconds between requests per ticker
+BASE_DELAY = 60.0  # base delay for exponential backoff
 CACHE_DURATION = timedelta(hours=12)
 
 # Constants for rate limiting and retries
-INITIAL_BACKOFF = 30  # Initial backoff time in seconds
-MAX_BACKOFF = 180  # Maximum backoff time in seconds
+INITIAL_BACKOFF = 60  # Initial backoff time in seconds
+MAX_BACKOFF = 300  # Maximum backoff time in seconds
 
 # Headers for requests
 HEADERS = {
@@ -435,18 +435,6 @@ def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Opti
             logger.info(f"Rate limiting: sleeping for {delay:.2f} seconds before requesting {ticker}")
             time.sleep(delay)
             
-            # Create a Ticker object first to validate
-            stock = yf.Ticker(ticker)
-            
-            # Try to get basic info first
-            try:
-                info = stock.info
-                if not info:
-                    raise ValueError(f"No info available for {ticker}")
-            except Exception as e:
-                logger.warning(f"Could not get info for {ticker}: {str(e)}")
-                # Continue even if info is not available
-            
             # Download data with explicit timezone handling
             hist = yf.download(
                 ticker,
@@ -455,7 +443,9 @@ def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Opti
                 interval='1d',
                 progress=False,
                 timeout=30,
-                ignore_tz=True  # Ignore timezone issues
+                ignore_tz=True,  # Ignore timezone issues
+                prepost=False,  # Skip pre/post market data
+                repair=True  # Try to repair missing data
             )
             
             if hist.empty:
