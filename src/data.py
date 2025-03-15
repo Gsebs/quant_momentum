@@ -34,6 +34,16 @@ import redis
 import json
 from urllib3.exceptions import MaxRetryError
 from requests.exceptions import RequestException
+from functools import wraps
+
+# Custom error classes
+class RetryableError(Exception):
+    """Error that should trigger a retry."""
+    pass
+
+class DataFetchError(Exception):
+    """Error that indicates a permanent failure in data fetching."""
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +51,9 @@ logger = logging.getLogger(__name__)
 Path("data/cache").mkdir(parents=True, exist_ok=True)
 
 # Constants for rate limiting
-MIN_DELAY = 60.0  # Minimum delay between requests
-MAX_DELAY = 120.0  # Maximum delay between requests
-MAX_RETRIES = 5   # Maximum number of retries per request
+MIN_DELAY = 5
+MAX_DELAY = 20
+MAX_RETRIES = 7
 BATCH_SIZE = 1    # Process one ticker at a time
 
 # Test mode tickers (reduced set for development)
@@ -56,8 +66,8 @@ BASE_DELAY = 60.0  # base delay for exponential backoff
 CACHE_DURATION = timedelta(hours=12)
 
 # Constants for rate limiting and retries
-INITIAL_BACKOFF = 60  # Initial backoff time in seconds
-MAX_BACKOFF = 300  # Maximum backoff time in seconds
+INITIAL_BACKOFF = 10
+MAX_BACKOFF = 120
 
 # Headers for requests
 HEADERS = {
