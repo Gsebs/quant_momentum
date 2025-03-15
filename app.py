@@ -10,6 +10,7 @@ from src.strategy import run_strategy
 from src.cache import clear_cache
 from datetime import datetime, timedelta
 import redis
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -50,14 +51,21 @@ def ensure_directories():
         raise
 
 def initialize_data():
+    """Initialize data and start background update."""
     try:
         logger.info("Initializing data...")
         ensure_directories()
-        # Run the strategy to generate data files
-        run_strategy()
-        logger.info("Data initialization completed successfully")
+        
+        # Run strategy (this will start background update if needed)
+        signals = run_strategy()
+        
+        if not signals:
+            logger.info("No cached signals available, background update started")
+        else:
+            logger.info(f"Found {len(signals)} cached signals")
+            
     except Exception as e:
-        logger.error(f"Error initializing data: {str(e)}", exc_info=True)
+        logger.error(f"Error initializing data: {str(e)}")
         raise
 
 @app.before_first_request
@@ -82,23 +90,36 @@ def home():
         ]
     })
 
-@app.route('/api/momentum-signals')
-@limiter.limit("5 per minute")
+@app.route('/api/momentum-signals', methods=['GET'])
+@limiter.limit("30/minute")
 def get_momentum_signals():
-    """Get momentum signals for stocks."""
+    """
+    Get momentum signals with background processing.
+    Returns cached data immediately if available.
+    """
     try:
-        initialize_data()
         signals = run_strategy()
+        
+        if not signals:
+            # Return empty list with status indicating background update
+            return jsonify({
+                'data': [],
+                'status': 'updating',
+                'message': 'Data is being updated in the background',
+                'timestamp': datetime.now().isoformat()
+            })
+        
         return jsonify({
-            'status': 'success',
             'data': signals,
+            'status': 'success',
             'timestamp': datetime.now().isoformat()
         })
+        
     except Exception as e:
-        logger.error(f"Error getting momentum signals: {str(e)}")
+        logger.error(f"Error getting momentum signals: {str(e)}", exc_info=True)
         return jsonify({
-            'status': 'error',
-            'error': str(e)
+            'error': 'Internal server error',
+            'message': str(e)
         }), 500
 
 @app.route('/api/performance', methods=['GET'])
@@ -178,6 +199,9 @@ def clear_cache_endpoint():
             'error': 'Cache clear failed',
             'message': str(e)
         }), 500
+
+# Initialize data on startup
+initialize_data()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

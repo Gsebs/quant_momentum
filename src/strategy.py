@@ -40,6 +40,10 @@ import concurrent.futures
 import requests.exceptions
 import pickle
 import os.path
+import threading
+from queue import Queue
+import redis
+import json
 
 # Just basic logging setup to see what's happening
 logging.basicConfig(level=logging.INFO)
@@ -58,7 +62,95 @@ RELIABLE_TICKERS = [
 ]
 
 # Number of tickers to process in each batch
-BATCH_SIZE = 5
+BATCH_SIZE = 2
+
+# Redis client for caching
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
+redis_client = redis.from_url(
+    REDIS_URL,
+    ssl_cert_reqs=None,
+    decode_responses=True
+)
+
+def get_cached_signals() -> List[Dict]:
+    """Get cached momentum signals."""
+    try:
+        cached = redis_client.get('momentum_signals')
+        if cached:
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Error getting cached signals: {str(e)}")
+    return []
+
+def save_signals_to_cache(signals: List[Dict]) -> None:
+    """Save momentum signals to cache."""
+    try:
+        redis_client.setex('momentum_signals', 300, json.dumps(signals))  # Cache for 5 minutes
+    except Exception as e:
+        logger.error(f"Error saving signals to cache: {str(e)}")
+
+def process_ticker_batch(batch: List[str], results: List[Dict]) -> None:
+    """Process a batch of tickers and update results."""
+    for ticker in batch:
+        try:
+            data = get_stock_data(ticker)
+            if data and 'price_change' in data:
+                momentum_score = calculate_momentum_score(data)
+                results.append({
+                    'ticker': ticker,
+                    'momentum_score': momentum_score,
+                    'price': data.get('price', 0),
+                    'volume': data.get('volume', 0),
+                    'price_change': data.get('price_change', 0)
+                })
+        except Exception as e:
+            logger.error(f"Error processing ticker {ticker}: {str(e)}")
+
+def update_signals_in_background() -> None:
+    """Update momentum signals in background thread."""
+    try:
+        logger.info(f"Starting background update of {len(RELIABLE_TICKERS)} tickers")
+        results = []
+        
+        # Process tickers in batches
+        for i in range(0, len(RELIABLE_TICKERS), BATCH_SIZE):
+            batch = RELIABLE_TICKERS[i:i + BATCH_SIZE]
+            process_ticker_batch(batch, results)
+            
+            # Add delay between batches
+            if i + BATCH_SIZE < len(RELIABLE_TICKERS):
+                time.sleep(5)  # 5 second delay between batches
+        
+        # Sort by momentum score
+        sorted_data = sorted(results, key=lambda x: x['momentum_score'], reverse=True)
+        
+        # Save to cache
+        save_signals_to_cache(sorted_data)
+        logger.info(f"Background update completed with {len(sorted_data)} signals")
+        
+    except Exception as e:
+        logger.error(f"Error in background update: {str(e)}")
+
+def run_strategy() -> List[Dict]:
+    """
+    Run the momentum strategy and return a list of stock recommendations.
+    Returns cached data immediately and updates in background.
+    """
+    try:
+        # Get cached signals first
+        signals = get_cached_signals()
+        
+        # Start background update if no cached data or cache is old
+        if not signals:
+            logger.info("No cached signals found, starting background update")
+            threading.Thread(target=update_signals_in_background).start()
+            return []
+            
+        return signals
+        
+    except Exception as e:
+        logger.error(f"Error in run_strategy: {str(e)}")
+        return []
 
 def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """Get data from cache if available and not expired."""
@@ -282,42 +374,6 @@ def filter_universe(data: pd.DataFrame) -> bool:
     except Exception as e:
         logger.error(f"Error filtering universe: {str(e)}")
         return False
-
-def run_strategy() -> List[Dict]:
-    """Run the momentum strategy and return a list of stock recommendations."""
-    try:
-        logger.info(f"Retrieved {len(RELIABLE_TICKERS)} tickers")
-        all_data = []
-        
-        # Process tickers in batches
-        for i in range(0, len(RELIABLE_TICKERS), BATCH_SIZE):
-            batch = RELIABLE_TICKERS[i:i + BATCH_SIZE]
-            logger.info(f"Processing batch {i//BATCH_SIZE + 1} of {(len(RELIABLE_TICKERS) + BATCH_SIZE - 1)//BATCH_SIZE}")
-            
-            for ticker in batch:
-                try:
-                    # Use get_stock_data from src/data.py with optional parameters
-                    data = get_stock_data(ticker)  # No need to pass start_date and end_date
-                    if data and 'price_change' in data:
-                        momentum_score = calculate_momentum_score(data)
-                        all_data.append({
-                            'ticker': ticker,
-                            'momentum_score': momentum_score,
-                            'price': data.get('price', 0),
-                            'volume': data.get('volume', 0),
-                            'price_change': data.get('price_change', 0)
-                        })
-                except Exception as e:
-                    logger.error(f"Error processing ticker {ticker}: {str(e)}")
-                    continue
-        
-        # Sort by momentum score in descending order
-        sorted_data = sorted(all_data, key=lambda x: x['momentum_score'], reverse=True)
-        return sorted_data
-        
-    except Exception as e:
-        logger.error(f"Error in run_strategy: {str(e)}")
-        return []
 
 def build_momentum_strategy(tickers: List[str], data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     """
