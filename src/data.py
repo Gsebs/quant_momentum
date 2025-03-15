@@ -41,9 +41,9 @@ logger = logging.getLogger(__name__)
 Path("data/cache").mkdir(parents=True, exist_ok=True)
 
 # Constants for rate limiting
-MIN_DELAY = 30.0  # Minimum delay between requests (increased)
-MAX_DELAY = 60.0  # Maximum delay between requests (increased)
-MAX_RETRIES = 3   # Maximum number of retries per request (reduced)
+MIN_DELAY = 30.0  # Minimum delay between requests
+MAX_DELAY = 60.0  # Maximum delay between requests
+MAX_RETRIES = 3   # Maximum number of retries per request
 BATCH_SIZE = 1    # Process one ticker at a time
 
 # Test mode tickers (reduced set for development)
@@ -51,13 +51,13 @@ RELIABLE_TICKERS = ['AAPL', 'MSFT', 'GOOGL']
 
 # Global rate limiter
 last_request_time = {}
-MIN_REQUEST_INTERVAL = 30.0  # seconds between requests per ticker (increased)
-BASE_DELAY = 30.0  # base delay for exponential backoff (increased)
+MIN_REQUEST_INTERVAL = 30.0  # seconds between requests per ticker
+BASE_DELAY = 30.0  # base delay for exponential backoff
 CACHE_DURATION = timedelta(hours=12)
 
 # Constants for rate limiting and retries
-INITIAL_BACKOFF = 30  # Initial backoff time in seconds (increased)
-MAX_BACKOFF = 180  # Maximum backoff time in seconds (increased)
+INITIAL_BACKOFF = 30  # Initial backoff time in seconds
+MAX_BACKOFF = 180  # Maximum backoff time in seconds
 
 # Headers for requests
 HEADERS = {
@@ -427,83 +427,68 @@ def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Opti
         start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
     
     backoff = INITIAL_BACKOFF
-    session = None
     
-    try:
-        # Create a session with custom headers
-        session = requests.Session()
-        session.headers.update(HEADERS)
-        
-        for attempt in range(MAX_RETRIES):
+    for attempt in range(MAX_RETRIES):
+        try:
+            # Add random delay between requests
+            delay = random.uniform(MIN_DELAY, MAX_DELAY)
+            logger.info(f"Rate limiting: sleeping for {delay:.2f} seconds before requesting {ticker}")
+            time.sleep(delay)
+            
+            # Download data directly
+            hist = yf.download(
+                ticker,
+                start=start_date,
+                end=end_date,
+                interval='1d',
+                progress=False,
+                timeout=30
+            )
+            
+            if hist.empty:
+                raise ValueError(f"No data available for {ticker}")
+            
+            # Validate data quality
+            required_cols = ['Close', 'Volume']
+            if not all(col in hist.columns for col in required_cols):
+                raise ValueError(f"Missing required columns for {ticker}")
+            
+            if len(hist) < 2:
+                raise ValueError(f"Insufficient data points for {ticker}")
+            
+            # Calculate metrics with error handling
             try:
-                # Add random delay between requests
-                delay = random.uniform(MIN_DELAY, MAX_DELAY)
-                logger.info(f"Rate limiting: sleeping for {delay:.2f} seconds before requesting {ticker}")
-                time.sleep(delay)
+                current_price = float(hist['Close'].iloc[-1])
+                avg_volume = float(hist['Volume'].mean())
+                initial_price = float(hist['Close'].iloc[0])
+                price_change = ((current_price - initial_price) / initial_price) * 100
                 
-                # Download data directly without getting info first
-                hist = yf.download(
-                    ticker,
-                    start=start_date,
-                    end=end_date,
-                    interval='1d',
-                    progress=False,
-                    timeout=30,
-                    session=session
-                )
-                
-                if hist.empty:
-                    raise ValueError(f"No data available for {ticker}")
-                
-                # Validate data quality
-                required_cols = ['Close', 'Volume']
-                if not all(col in hist.columns for col in required_cols):
-                    raise ValueError(f"Missing required columns for {ticker}")
-                
-                if len(hist) < 2:
-                    raise ValueError(f"Insufficient data points for {ticker}")
-                
-                # Calculate metrics with error handling
-                try:
-                    current_price = float(hist['Close'].iloc[-1])
-                    avg_volume = float(hist['Volume'].mean())
-                    initial_price = float(hist['Close'].iloc[0])
-                    price_change = ((current_price - initial_price) / initial_price) * 100
-                    
-                    return {
-                        'ticker': ticker,
-                        'price': current_price,
-                        'volume': avg_volume,
-                        'price_change': price_change
-                    }
-                except Exception as e:
-                    logger.error(f"Error calculating metrics for {ticker}: {str(e)}")
-                    raise ValueError(f"Error processing data for {ticker}")
-                
-            except (RequestException, MaxRetryError) as e:
-                if "429" in str(e):  # Rate limit error
-                    logger.warning(f"Rate limit hit for {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {backoff} seconds")
-                    time.sleep(backoff)
-                    backoff = min(backoff * 2, MAX_BACKOFF)
-                    continue
-                    
+                return {
+                    'ticker': ticker,
+                    'price': current_price,
+                    'volume': avg_volume,
+                    'price_change': price_change
+                }
             except Exception as e:
-                logger.warning(f"Error fetching {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {backoff} seconds: {str(e)}")
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(backoff)
-                    backoff = min(backoff * 2, MAX_BACKOFF)
-                    continue
-                else:
-                    logger.error(f"Failed to fetch data for {ticker} after {MAX_RETRIES} attempts: {str(e)}")
-                    raise ValueError(f"Could not fetch data for {ticker}")
-                    
-    except Exception as e:
-        logger.error(f"Error in get_stock_data for {ticker}: {str(e)}")
-        raise ValueError(f"Could not fetch data for {ticker}")
-        
-    finally:
-        if session:
-            session.close()
+                logger.error(f"Error calculating metrics for {ticker}: {str(e)}")
+                raise ValueError(f"Error processing data for {ticker}")
+            
+        except (RequestException, MaxRetryError) as e:
+            if "429" in str(e):  # Rate limit error
+                logger.warning(f"Rate limit hit for {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {backoff} seconds")
+                time.sleep(backoff)
+                backoff = min(backoff * 2, MAX_BACKOFF)
+                continue
+                
+        except Exception as e:
+            logger.warning(f"Error fetching {ticker}, attempt {attempt + 1}/{MAX_RETRIES}, waiting {backoff} seconds: {str(e)}")
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(backoff)
+                backoff = min(backoff * 2, MAX_BACKOFF)
+                continue
+            else:
+                logger.error(f"Failed to fetch data for {ticker} after {MAX_RETRIES} attempts: {str(e)}")
+                raise ValueError(f"Could not fetch data for {ticker}")
     
     raise ValueError(f"Could not fetch data for {ticker} after {MAX_RETRIES} attempts")
 
