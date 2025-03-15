@@ -377,7 +377,7 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
         return pd.DataFrame()
 
 @redis_cache(expire_time=21600)  # Cache for 6 hours
-def get_stock_data(ticker, period="1mo"):
+def get_stock_data(ticker, period="1d"):  # Changed to 1d for most recent data
     """
     Fetch stock data for a given ticker with caching and rate limiting.
     """
@@ -391,24 +391,38 @@ def get_stock_data(ticker, period="1mo"):
                 logger.info(f"Waiting {delay:.2f} seconds before retry {attempt + 1} for {ticker}")
                 time.sleep(delay)
 
+            # Get ticker info first
             stock = yf.Ticker(ticker)
+            info = stock.info
+            
+            if not info:
+                raise ValueError(f"No info returned for {ticker}")
+            
+            # Get historical data
             hist = stock.history(period=period, interval="1d")
             
             if hist.empty:
-                raise ValueError(f"No data returned for {ticker}")
-                
-            # Process the data
-            data = {
-                'ticker': ticker,
-                'current_price': hist['Close'][-1] if not hist.empty else None,
-                'volume': hist['Volume'][-1] if not hist.empty else None,
-                'price_change': ((hist['Close'][-1] - hist['Close'][0]) / hist['Close'][0]) if not hist.empty else None,
-                'last_updated': datetime.now().isoformat()
-            }
+                # If no historical data, use info data
+                data = {
+                    'ticker': ticker,
+                    'current_price': info.get('regularMarketPrice', None),
+                    'volume': info.get('regularMarketVolume', None),
+                    'price_change': info.get('regularMarketChangePercent', None),
+                    'last_updated': datetime.now().isoformat()
+                }
+            else:
+                # Use historical data if available
+                data = {
+                    'ticker': ticker,
+                    'current_price': hist['Close'][-1] if not hist.empty else None,
+                    'volume': hist['Volume'][-1] if not hist.empty else None,
+                    'price_change': ((hist['Close'][-1] - hist['Close'][0]) / hist['Close'][0]) if not hist.empty else None,
+                    'last_updated': datetime.now().isoformat()
+                }
             
             # Validate data
-            if data['current_price'] is None or data['volume'] is None:
-                raise ValueError(f"Invalid data returned for {ticker}")
+            if data['current_price'] is None:
+                raise ValueError(f"No price data available for {ticker}")
             
             return data
 

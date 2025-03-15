@@ -312,61 +312,57 @@ def filter_universe(data: pd.DataFrame) -> bool:
         logger.error(f"Error filtering universe: {str(e)}")
         return False
 
-def run_strategy() -> List[Dict]:
-    """
-    Run the momentum trading strategy.
-    
-    Returns:
-        List of dictionaries containing trading signals
-    """
+def run_strategy():
+    """Run the momentum strategy and return signals."""
     try:
-        # Get list of tickers
-        tickers = get_sp500_tickers()
+        # Get test tickers for development
+        tickers = RELIABLE_TICKERS
         logger.info(f"Retrieved {len(tickers)} tickers")
         
-        # Get historical data for all tickers
-        stock_data = get_batch_data(tickers)
-        logger.info(f"Retrieved data for {len(stock_data)} stocks")
+        # Process tickers in batches
+        all_data = []
+        batch_size = BATCH_SIZE
+        for i in range(0, len(tickers), batch_size):
+            batch = tickers[i:i+batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1} of {(len(tickers)-1)//batch_size + 1}")
+            
+            for ticker in batch:
+                try:
+                    data = get_stock_data(ticker)
+                    if data and data['current_price'] is not None:
+                        all_data.append(data)
+                except Exception as e:
+                    logger.error(f"Error processing {ticker}: {str(e)}")
+                    continue
         
-        if not stock_data:
+        logger.info(f"Retrieved data for {len(all_data)} stocks")
+        
+        if not all_data:
             logger.error("No valid stock data retrieved")
             return []
             
-        # Calculate momentum metrics and scores
+        # Calculate momentum metrics
         signals = []
-        for ticker, data in stock_data.items():
+        for data in all_data:
             try:
-                if not validate_stock_data(data):
-                    logger.warning(f"Invalid data for {ticker}, skipping")
-                    continue
-                    
-                # Calculate momentum metrics
-                metrics_df = calculate_momentum_metrics(data)
-                
-                # Calculate momentum score
-                score = calculate_momentum_score(metrics_df)
-                
-                if score is not None:
-                    signal = {
-                        'ticker': ticker,
-                        'momentum_score': score,
-                        'last_close': data['Close'].iloc[-1],
-                        'timestamp': datetime.now().isoformat()
-                    }
-                    signals.append(signal)
-                    
+                momentum_score = calculate_momentum_score(data)
+                signal = {
+                    'ticker': data['ticker'],
+                    'price': data['current_price'],
+                    'volume': data.get('volume', 0),
+                    'momentum_score': momentum_score,
+                    'signal': 'BUY' if momentum_score > 0 else 'SELL',
+                    'timestamp': datetime.now().isoformat()
+                }
+                signals.append(signal)
             except Exception as e:
-                logger.error(f"Error processing {ticker}: {str(e)}")
+                logger.error(f"Error calculating momentum for {data['ticker']}: {str(e)}")
                 continue
-                
-        # Sort signals by momentum score
-        signals.sort(key=lambda x: x['momentum_score'], reverse=True)
         
-        logger.info(f"Generated {len(signals)} trading signals")
         return signals
         
     except Exception as e:
-        logger.error(f"Error running strategy: {str(e)}")
+        logger.error(f"Error in run_strategy: {str(e)}")
         return []
 
 def build_momentum_strategy(tickers: List[str], data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
