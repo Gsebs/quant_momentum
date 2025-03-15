@@ -168,29 +168,19 @@ def update_signals():
         return None
 
 def run_strategy(tickers: List[str]) -> List[Dict]:
-    """
-    Run momentum strategy with background processing and caching.
-    
-    Args:
-        tickers (List[str]): List of stock tickers
-    
-    Returns:
-        List[Dict]: List of dictionaries containing momentum signals
-    """
-    # Try to get cached signals first
-    cached_signals = get_cached_signals()
-    if cached_signals:
-        logger.info("Returning cached signals")
-        return cached_signals
-    
-    # Start background update if no cached data
-    logger.info("No cached signals found, starting background update")
-    thread = threading.Thread(target=update_signals_in_background, args=(tickers,))
-    thread.daemon = True
-    thread.start()
-    
-    # Return empty list while update is in progress
-    return []
+    """Run the momentum strategy on the given tickers."""
+    try:
+        # Start background update
+        thread = threading.Thread(target=update_signals, args=(tickers,))
+        thread.daemon = True
+        thread.start()
+        
+        # Return initial signals
+        return get_cached_signals() or []
+        
+    except Exception as e:
+        logging.error(f"Error running strategy: {str(e)}")
+        return []
 
 def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """Get data from cache if available and not expired."""
