@@ -37,6 +37,7 @@ export const fetchDashboardData = async () => {
             api.get('/signals'),
             api.get('/alerts')
         ]);
+        
 
         return {
             metrics: metricsResponse.data,
