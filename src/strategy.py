@@ -99,9 +99,9 @@ def process_batch(batch: List[str]) -> List[Dict]:
     """Process a batch of tickers and return their momentum signals."""
     signals = []
     
-    # Calculate date range for data
+    # Calculate date range for data (use historical data)
     end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')  # 1 year of data
+    start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')  # 1 year of historical data
     
     for ticker in batch:
         try:
