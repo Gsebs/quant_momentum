@@ -123,13 +123,11 @@ def process_batch(tickers):
             
     return results
 
-def update_signals():
+def update_signals(tickers: List[str]):
     """Update momentum signals for all tickers."""
     try:
-        # Get list of tickers
-        tickers = get_sp500_tickers()
         if not tickers:
-            logging.error("Failed to get SP500 tickers")
+            logging.error("No tickers provided")
             return
             
         # Process tickers in batches
