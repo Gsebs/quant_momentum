@@ -55,6 +55,10 @@ MIN_REQUEST_INTERVAL = 10.0  # seconds between requests per ticker (increased)
 BASE_DELAY = 15.0  # increased base delay for exponential backoff
 CACHE_DURATION = timedelta(hours=12)
 
+# Constants for rate limiting and retries
+INITIAL_BACKOFF = 10  # Initial backoff time in seconds
+MAX_BACKOFF = 120  # Maximum backoff time in seconds
+
 # User agent headers with more realistic browser info
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -419,7 +423,7 @@ def redis_cache(expire_time=300):
         return wrapper
     return decorator
 
-@redis_cache(expire_time=21600)  # Cache for 6 hours
+@redis_cache(expire_time=300)  # Cache for 5 minutes
 def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """
     Fetch stock data with improved error handling and rate limiting.
