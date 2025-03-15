@@ -435,110 +435,35 @@ def redis_cache(expire_time=300):
         return wrapper
     return decorator
 
-@redis_cache(expire_time=300)  # Cache for 5 minutes
-def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Fetch stock data with improved error handling and rate limiting.
-    
-    Args:
-        ticker (str): Stock ticker symbol
-        start_date (str, optional): Start date in YYYY-MM-DD format
-        end_date (str, optional): End date in YYYY-MM-DD format
-    
-    Returns:
-        dict: Dictionary containing ticker, price, volume, and price_change
-    """
+@redis_cache(expire_time=300)
+def get_stock_data(ticker, start_date, end_date):
+    """Get stock data for a given ticker and date range."""
     try:
-        # Convert dates to timestamps
-        if start_date is None:
-            start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
-        if end_date is None:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-
-        start_timestamp = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp())
-        end_timestamp = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp())
-
-        # Construct URL with proper parameters
-        base_url = "https://query1.finance.yahoo.com/v8/finance/chart/"
-        params = {
-            "symbol": ticker,
-            "period1": start_timestamp,
-            "period2": end_timestamp,
-            "interval": "1d",
-            "includePrePost": "false",
-            "events": "div,splits"
-        }
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "max-age=0"
-        }
-
-        # Add random delay to avoid rate limiting
-        sleep_time = random.uniform(MIN_DELAY, MAX_DELAY)
-        logger.info(f"Rate limiting: sleeping for {sleep_time:.2f} seconds before requesting {ticker}")
-        time.sleep(sleep_time)
-
-        # Make request with session
-        with requests.Session() as session:
-            session.headers.update(headers)
-            response = session.get(base_url + ticker, params=params)
-            response.raise_for_status()
-            data = response.json()
-
-            # Extract price data
-            chart = data['chart']['result'][0]
-            timestamps = chart['timestamp']
-            quotes = chart['indicators']['quote'][0]
+        logging.info(f"Fetching data for {ticker} from {start_date} to {end_date}")
+        df = yf.download(ticker, start=start_date, end=end_date)
+        
+        if df.empty:
+            logging.error(f"No data returned for {ticker}")
+            return None
             
-            # Create DataFrame
-            df = pd.DataFrame({
-                'Date': pd.to_datetime([datetime.fromtimestamp(x) for x in timestamps]),
-                'Open': quotes['open'],
-                'High': quotes['high'],
-                'Low': quotes['low'],
-                'Close': quotes['close'],
-                'Volume': quotes['volume']
-            })
-            df.set_index('Date', inplace=True)
-
-            # Calculate metrics
-            current_price = df['Close'].iloc[-1]
-            avg_volume = df['Volume'].mean()
-            price_change = ((current_price - df['Close'].iloc[0]) / df['Close'].iloc[0]) * 100
-
-            return {
-                'current_price': current_price,
-                'avg_volume': avg_volume,
-                'price_change': price_change,
-                'data': df
-            }
-
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 429:  # Too Many Requests
-            logger.warning(f"Rate limit hit for {ticker}, waiting {MAX_BACKOFF} seconds")
-            time.sleep(MAX_BACKOFF)
-            raise RetryableError(f"Rate limit exceeded for {ticker}")
-        else:
-            logger.error(f"HTTP error occurred while fetching {ticker}: {str(e)}")
-            raise DataFetchError(f"Failed to fetch data for {ticker}: {str(e)}")
+        # Verify required columns exist
+        required_columns = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            logging.error(f"Missing required columns for {ticker}: {missing_columns}")
+            return None
             
-    except (KeyError, IndexError) as e:
-        logger.error(f"Data parsing error for {ticker}: {str(e)}")
-        raise DataFetchError(f"Failed to parse data for {ticker}: {str(e)}")
+        # Calculate metrics
+        current_price = df['Adj Close'][-1]
+        avg_volume = df['Volume'].mean()
+        price_change = ((current_price - df['Adj Close'][0]) / df['Adj Close'][0]) * 100
+        
+        logging.info(f"Successfully fetched data for {ticker}. Current price: {current_price:.2f}, Price change: {price_change:.2f}%, Avg volume: {avg_volume:.0f}")
+        return df
         
     except Exception as e:
-        logger.error(f"Unexpected error while fetching {ticker}: {str(e)}")
-        raise DataFetchError(f"Unexpected error for {ticker}: {str(e)}")
+        logging.error(f"Error fetching data for {ticker}: {str(e)}")
+        return None
 
 def get_batch_data(tickers: List[str]) -> List[Dict]:
     """
