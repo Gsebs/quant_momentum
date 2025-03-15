@@ -377,59 +377,53 @@ def get_market_data(start_date: Optional[str] = None, end_date: Optional[str] = 
         return pd.DataFrame()
 
 @redis_cache(expire_time=21600)  # Cache for 6 hours
-def get_stock_data(ticker, period="1d"):  # Changed to 1d for most recent data
+def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict:
     """
-    Fetch stock data for a given ticker with caching and rate limiting.
-    """
-    logger.info(f"Fetching data for {ticker}")
+    Get stock data for a given ticker.
     
-    for attempt in range(MAX_RETRIES):
-        try:
-            # Add jitter to delay
-            delay = random.uniform(MIN_DELAY, MAX_DELAY)
-            if attempt > 0:
-                logger.info(f"Waiting {delay:.2f} seconds before retry {attempt + 1} for {ticker}")
-                time.sleep(delay)
-
-            # Get ticker info first
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            
-            if not info:
-                raise ValueError(f"No info returned for {ticker}")
-            
-            # Get historical data
-            hist = stock.history(period=period, interval="1d")
-            
-            if hist.empty:
-                # If no historical data, use info data
-                data = {
-                    'ticker': ticker,
-                    'current_price': info.get('regularMarketPrice', None),
-                    'volume': info.get('regularMarketVolume', None),
-                    'price_change': info.get('regularMarketChangePercent', None),
-                    'last_updated': datetime.now().isoformat()
-                }
-            else:
-                # Use historical data if available
-                data = {
-                    'ticker': ticker,
-                    'current_price': hist['Close'][-1] if not hist.empty else None,
-                    'volume': hist['Volume'][-1] if not hist.empty else None,
-                    'price_change': ((hist['Close'][-1] - hist['Close'][0]) / hist['Close'][0]) if not hist.empty else None,
-                    'last_updated': datetime.now().isoformat()
-                }
-            
-            # Validate data
-            if data['current_price'] is None:
-                raise ValueError(f"No price data available for {ticker}")
-            
-            return data
-
-        except Exception as e:
-            logger.warning(f"Attempt {attempt + 1} failed for {ticker}: {str(e)}")
-            if attempt == MAX_RETRIES - 1:
-                raise
+    Args:
+        ticker (str): Stock ticker symbol
+        start_date (str, optional): Start date for historical data (YYYY-MM-DD)
+        end_date (str, optional): End date for historical data (YYYY-MM-DD)
+        
+    Returns:
+        Dict: Dictionary containing stock data
+    """
+    try:
+        # If dates not provided, use last trading day
+        if not start_date or not end_date:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # Get stock info
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        # Get historical data
+        hist = stock.history(start=start_date, end=end_date)
+        
+        if hist.empty:
+            # If no historical data, use info data
+            return {
+                'ticker': ticker,
+                'price': info.get('regularMarketPrice', 0),
+                'volume': info.get('regularMarketVolume', 0),
+                'price_change': info.get('regularMarketChangePercent', 0)
+            }
+        
+        # Calculate price change
+        price_change = ((hist['Close'].iloc[-1] - hist['Close'].iloc[0]) / hist['Close'].iloc[0]) * 100
+        
+        return {
+            'ticker': ticker,
+            'price': hist['Close'].iloc[-1],
+            'volume': hist['Volume'].iloc[-1],
+            'price_change': price_change
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching data for {ticker}: {str(e)}")
+        raise ValueError(f"Could not fetch data for {ticker}")
 
 def get_batch_data(tickers):
     """

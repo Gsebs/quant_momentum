@@ -24,12 +24,17 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Configure Redis for rate limiting
 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-redis_client = redis.from_url(redis_url)
+redis_client = redis.from_url(
+    redis_url,
+    ssl_cert_reqs=None,  # Disable SSL certificate verification
+    decode_responses=True  # Decode responses to UTF-8 strings
+)
 
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
     storage_uri=redis_url,
+    storage_options={"ssl_cert_reqs": None},  # Disable SSL certificate verification
     default_limits=["200 per day", "50 per hour"]
 )
 
