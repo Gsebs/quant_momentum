@@ -137,30 +137,34 @@ def process_batch(tickers, batch_num, total_batches):
     return results
 
 def update_signals_in_background(tickers: List[str]) -> None:
-    """Update momentum signals in background thread."""
+    """Update momentum signals in the background."""
     try:
-        results = []
+        # Split tickers into batches of 10
+        batch_size = 10
+        batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
+        total_batches = len(batches)
         
-        # Process tickers in small batches with delays
-        for i in range(0, len(tickers), BATCH_SIZE):
-            batch = tickers[i:i + BATCH_SIZE]
-            logger.info(f"Processing batch {(i//BATCH_SIZE)+1} of {(len(tickers)-1)//BATCH_SIZE + 1}")
-            
-            results.extend(process_batch(batch))
-            
-            # Add delay between batches
-            if i + BATCH_SIZE < len(tickers):
-                logger.info(f"Waiting {BATCH_DELAY} seconds before next batch")
-                time.sleep(BATCH_DELAY)
-        
-        # Sort results by price change
-        if results:
-            results.sort(key=lambda x: x['momentum_score'], reverse=True)
-            save_signals_to_cache(results)
-            logger.info(f"Successfully updated {len(results)} momentum signals")
-        
+        for batch_num, batch in enumerate(batches, 1):
+            try:
+                # Process the batch
+                signals = process_batch(batch, batch_num, total_batches)
+                
+                # Cache the results
+                if signals:
+                    cache_signals(signals)
+                    
+                # Wait 30 seconds before next batch to avoid rate limiting
+                if batch_num < total_batches:
+                    logging.info("Waiting 30 seconds before next batch")
+                    time.sleep(30)
+                    
+            except Exception as e:
+                logging.error(f"Error processing batch {batch_num}: {str(e)}")
+                continue
+                
     except Exception as e:
-        logger.error(f"Error in background update: {e}")
+        logging.error(f"Error in background update: {str(e)}")
+        return None
 
 def run_strategy(tickers: List[str]) -> List[Dict]:
     """
