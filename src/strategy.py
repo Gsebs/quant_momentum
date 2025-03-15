@@ -334,7 +334,8 @@ def run_strategy() -> List[Dict]:
             
             for ticker in batch:
                 try:
-                    data = get_stock_data(ticker)
+                    # Use get_stock_data from src/data.py with optional parameters
+                    data = get_stock_data(ticker)  # No need to pass start_date and end_date
                     if data and 'price_change' in data:
                         momentum_score = calculate_momentum_score(data)
                         all_data.append({
