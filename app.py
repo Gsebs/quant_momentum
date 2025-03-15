@@ -24,17 +24,13 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Configure Redis for rate limiting
 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-redis_client = redis.from_url(
-    redis_url,
-    ssl=True if redis_url.startswith('rediss://') else False,
-    ssl_cert_reqs=None  # Remove explicit SSL cert requirements
-)
+redis_client = redis.from_url(redis_url)
 
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
     storage_uri=redis_url,
-    storage_options={"ssl": True if redis_url.startswith('rediss://') else False}
+    default_limits=["200 per day", "50 per hour"]
 )
 
 # Create necessary directories on startup
@@ -82,30 +78,22 @@ def home():
     })
 
 @app.route('/api/momentum-signals')
-@limiter.limit("30/minute")
+@limiter.limit("5 per minute")
 def get_momentum_signals():
-    """Get momentum trading signals."""
+    """Get momentum signals for stocks."""
     try:
+        initialize_data()
         signals = run_strategy()
-        
-        if not signals:
-            return jsonify({
-                'error': 'No momentum signals available',
-                'message': 'Strategy is currently processing data'
-            }), 404
-            
         return jsonify({
             'status': 'success',
-            'signals': signals,
-            'cached': True,
+            'data': signals,
             'timestamp': datetime.now().isoformat()
         })
-        
     except Exception as e:
-        logger.error(f"Error getting momentum signals: {str(e)}", exc_info=True)
+        logger.error(f"Error getting momentum signals: {str(e)}")
         return jsonify({
-            'error': 'Internal server error',
-            'message': str(e)
+            'status': 'error',
+            'error': str(e)
         }), 500
 
 @app.route('/api/performance', methods=['GET'])
@@ -155,20 +143,15 @@ def get_chart(filename):
 def health_check():
     """Health check endpoint."""
     try:
-        # Ensure directories exist
-        ensure_directories()
-        
-        # Check if we can access the data directory
-        data_status = os.path.exists('data')
-        
+        initialize_data()
         return jsonify({
             'status': 'healthy',
-            'timestamp': datetime.now().isoformat(),
-            'data_directory': data_status,
-            'environment': os.getenv('FLASK_ENV', 'production')
+            'environment': os.getenv('FLASK_ENV', 'production'),
+            'data_directory': True,
+            'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}", exc_info=True)
+        logger.error(f"Health check failed: {str(e)}")
         return jsonify({
             'status': 'unhealthy',
             'error': str(e)

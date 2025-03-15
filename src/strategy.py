@@ -57,6 +57,9 @@ RELIABLE_TICKERS = [
     'WMT', 'PG', 'MA', 'HD', 'UNH', 'BAC', 'XOM', 'PFE', 'CSCO', 'VZ'
 ]
 
+# Number of tickers to process in each batch
+BATCH_SIZE = 5
+
 def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """Get data from cache if available and not expired."""
     cache_file = f'data/cache/{ticker}.pkl'
@@ -318,54 +321,36 @@ def filter_universe(data: pd.DataFrame) -> bool:
         logger.error(f"Error filtering universe: {str(e)}")
         return False
 
-def run_strategy():
-    """Run the momentum strategy and return signals."""
+def run_strategy() -> List[Dict]:
+    """Run the momentum strategy and return a list of stock recommendations."""
     try:
-        # Get test tickers for development
-        tickers = RELIABLE_TICKERS
-        logger.info(f"Retrieved {len(tickers)} tickers")
+        logger.info(f"Retrieved {len(RELIABLE_TICKERS)} tickers")
+        all_data = []
         
         # Process tickers in batches
-        all_data = []
-        batch_size = BATCH_SIZE
-        for i in range(0, len(tickers), batch_size):
-            batch = tickers[i:i+batch_size]
-            logger.info(f"Processing batch {i//batch_size + 1} of {(len(tickers)-1)//batch_size + 1}")
+        for i in range(0, len(RELIABLE_TICKERS), BATCH_SIZE):
+            batch = RELIABLE_TICKERS[i:i + BATCH_SIZE]
+            logger.info(f"Processing batch {i//BATCH_SIZE + 1} of {(len(RELIABLE_TICKERS) + BATCH_SIZE - 1)//BATCH_SIZE}")
             
             for ticker in batch:
                 try:
                     data = get_stock_data(ticker)
-                    if data and data['current_price'] is not None:
-                        all_data.append(data)
+                    if data and 'price_change' in data:
+                        momentum_score = calculate_momentum_score(data)
+                        all_data.append({
+                            'ticker': ticker,
+                            'momentum_score': momentum_score,
+                            'price': data.get('price', 0),
+                            'volume': data.get('volume', 0),
+                            'price_change': data.get('price_change', 0)
+                        })
                 except Exception as e:
-                    logger.error(f"Error processing {ticker}: {str(e)}")
+                    logger.error(f"Error processing ticker {ticker}: {str(e)}")
                     continue
         
-        logger.info(f"Retrieved data for {len(all_data)} stocks")
-        
-        if not all_data:
-            logger.error("No valid stock data retrieved")
-            return []
-            
-        # Calculate momentum metrics
-        signals = []
-        for data in all_data:
-            try:
-                momentum_score = calculate_momentum_score(data)
-                signal = {
-                    'ticker': data['ticker'],
-                    'price': data['current_price'],
-                    'volume': data.get('volume', 0),
-                    'momentum_score': momentum_score,
-                    'signal': 'BUY' if momentum_score > 0 else 'SELL',
-                    'timestamp': datetime.now().isoformat()
-                }
-                signals.append(signal)
-            except Exception as e:
-                logger.error(f"Error calculating momentum for {data['ticker']}: {str(e)}")
-                continue
-        
-        return signals
+        # Sort by momentum score in descending order
+        sorted_data = sorted(all_data, key=lambda x: x['momentum_score'], reverse=True)
+        return sorted_data
         
     except Exception as e:
         logger.error(f"Error in run_strategy: {str(e)}")
