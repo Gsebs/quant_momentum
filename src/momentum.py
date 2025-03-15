@@ -7,7 +7,6 @@ import numpy as np
 import logging
 from typing import Dict, List, Optional
 
-<<<<<<< HEAD
 def calculate_momentum_score(data: pd.DataFrame) -> float:
     """
     Calculate momentum score for a single stock.
@@ -45,8 +44,6 @@ def calculate_momentum_score(data: pd.DataFrame) -> float:
         logging.error(f"Error calculating momentum score: {str(e)}")
         return None
 
-=======
->>>>>>> 6b49d541da941037acb260474c6f8b97715dd096
 def calculate_momentum_metrics(data: pd.DataFrame) -> pd.DataFrame:
     """
     Calculate momentum metrics for each stock.
