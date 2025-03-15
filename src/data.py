@@ -457,33 +457,31 @@ def get_stock_data(ticker, start_date, end_date):
         
         logging.info(f"Fetching data for {ticker} from {start_str} to {end_str}")
         
-        # Download data with retry logic
-        for attempt in range(3):
-            try:
-                df = yf.download(
-                    ticker,
-                    start=start_str,
-                    end=end_str,
-                    progress=False,
-                    interval='1d'
-                )
-                break
-            except Exception as e:
-                if attempt == 2:  # Last attempt
-                    logging.error(f"Failed to fetch data for {ticker} after 3 attempts: {str(e)}")
-                    return None
-                time.sleep(2 ** attempt)  # Exponential backoff
+        # Create a Ticker object
+        stock = yf.Ticker(ticker)
+        
+        # Get historical data
+        df = stock.history(
+            start=start_str,
+            end=end_str,
+            interval='1d',
+            auto_adjust=True
+        )
         
         if df.empty:
             logging.error(f"No data returned for {ticker}")
             return None
             
         # Verify required columns exist
-        required_columns = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             logging.error(f"Missing required columns for {ticker}: {missing_columns}")
             return None
+            
+        # Add Adj Close column if not present
+        if 'Adj Close' not in df.columns:
+            df['Adj Close'] = df['Close']
             
         # Calculate metrics
         current_price = df['Adj Close'][-1]
