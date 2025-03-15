@@ -41,23 +41,23 @@ logger = logging.getLogger(__name__)
 Path("data/cache").mkdir(parents=True, exist_ok=True)
 
 # Constants for rate limiting
-MIN_DELAY = 5.0  # Minimum delay between requests
-MAX_DELAY = 30.0  # Maximum delay between requests
-MAX_RETRIES = 5  # Maximum number of retries per request
-BATCH_SIZE = 2   # Number of tickers to process in each batch
+MIN_DELAY = 30.0  # Minimum delay between requests (increased)
+MAX_DELAY = 60.0  # Maximum delay between requests (increased)
+MAX_RETRIES = 3   # Maximum number of retries per request (reduced)
+BATCH_SIZE = 1    # Process one ticker at a time
 
 # Test mode tickers (reduced set for development)
 RELIABLE_TICKERS = ['AAPL', 'MSFT', 'GOOGL']
 
 # Global rate limiter
 last_request_time = {}
-MIN_REQUEST_INTERVAL = 10.0  # seconds between requests per ticker
-BASE_DELAY = 15.0  # base delay for exponential backoff
+MIN_REQUEST_INTERVAL = 30.0  # seconds between requests per ticker (increased)
+BASE_DELAY = 30.0  # base delay for exponential backoff (increased)
 CACHE_DURATION = timedelta(hours=12)
 
 # Constants for rate limiting and retries
-INITIAL_BACKOFF = 10  # Initial backoff time in seconds
-MAX_BACKOFF = 120  # Maximum backoff time in seconds
+INITIAL_BACKOFF = 30  # Initial backoff time in seconds (increased)
+MAX_BACKOFF = 180  # Maximum backoff time in seconds (increased)
 
 # Headers for requests
 HEADERS = {
@@ -441,27 +441,15 @@ def get_stock_data(ticker: str, start_date: Optional[str] = None, end_date: Opti
                 logger.info(f"Rate limiting: sleeping for {delay:.2f} seconds before requesting {ticker}")
                 time.sleep(delay)
                 
-                # Create a new Ticker object with the session
-                stock = yf.Ticker(ticker, session=session)
-                
-                # First try to get basic info to validate the ticker
-                try:
-                    info = stock.info
-                    if not info or not isinstance(info, dict):
-                        raise ValueError(f"Invalid ticker info for {ticker}")
-                except Exception as e:
-                    logger.warning(f"Could not get info for {ticker}: {str(e)}")
-                    if attempt < MAX_RETRIES - 1:
-                        continue
-                    raise ValueError(f"Could not validate ticker {ticker}")
-                
-                # Fetch historical data with validation
-                hist = stock.history(
+                # Download data directly without getting info first
+                hist = yf.download(
+                    ticker,
                     start=start_date,
                     end=end_date,
                     interval='1d',
-                    auto_adjust=True,
-                    timeout=30
+                    progress=False,
+                    timeout=30,
+                    session=session
                 )
                 
                 if hist.empty:
