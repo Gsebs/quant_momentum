@@ -10,27 +10,41 @@ import pandas as pd
 from typing import Any, Dict, Optional
 from redis.retry import Retry
 from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError, TimeoutError
 
 logger = logging.getLogger(__name__)
 
-# Configure Redis with better connection handling
+# Configure Redis with better connection handling and pooling
 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
 redis_retry = Retry(
-    ExponentialBackoff(cap=0.5, base=0.2),  # cap=0.5s, base=0.2s
-    3  # max retries
+    ExponentialBackoff(cap=1.0, base=0.5),  # Increased retry parameters
+    5  # Increased max retries
 )
 
-redis_client = redis.from_url(
-    redis_url,
-    ssl_cert_reqs=None,
-    decode_responses=True,
-    socket_timeout=10,
-    socket_connect_timeout=10,
-    retry_on_timeout=True,
-    retry=redis_retry,
-    max_connections=20,
-    health_check_interval=30
-)
+def get_redis_client():
+    try:
+        client = redis.from_url(
+            redis_url,
+            ssl_cert_reqs=None,
+            decode_responses=True,
+            socket_timeout=15,  # Increased timeout
+            socket_connect_timeout=15,
+            retry_on_timeout=True,
+            retry=redis_retry,
+            max_connections=50,  # Increased pool size
+            health_check_interval=15
+        )
+        # Test connection
+        client.ping()
+        return client
+    except (ConnectionError, TimeoutError) as e:
+        logger.error(f"Failed to connect to Redis: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error connecting to Redis: {str(e)}")
+        return None
+
+redis_client = get_redis_client()
 
 # Initialize requests-cache for Yahoo Finance API calls
 requests_cache.install_cache(

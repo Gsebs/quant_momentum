@@ -185,6 +185,14 @@ def home():
 def get_momentum_signals():
     """Get momentum signals for stocks"""
     try:
+        if redis_client is None:
+            logger.error("Redis connection not available")
+            return format_api_response(
+                status='error',
+                message='Service temporarily unavailable',
+                code=503
+            )
+            
         signals = run_strategy(RELIABLE_TICKERS)
         if not signals:
             # Return sample data if no signals available
@@ -228,6 +236,13 @@ def get_momentum_signals():
         signals = sorted(signals, key=lambda x: abs(float(x.get('momentum_score', 0))), reverse=True)
         return format_api_response(data=signals)
         
+    except (ConnectionError, TimeoutError) as e:
+        logger.error(f"Redis connection error in get_momentum_signals: {str(e)}")
+        return format_api_response(
+            status='error',
+            message='Service temporarily unavailable',
+            code=503
+        )
     except Exception as e:
         logger.error(f"Error in get_momentum_signals: {str(e)}")
         return format_api_response(
@@ -241,6 +256,14 @@ def get_momentum_signals():
 def get_performance():
     """Get portfolio performance metrics"""
     try:
+        if redis_client is None:
+            logger.error("Redis connection not available")
+            return format_api_response(
+                status='error',
+                message='Service temporarily unavailable',
+                code=503
+            )
+            
         # Get current portfolio state
         try:
             portfolio = redis_client.get('portfolio_state')
@@ -250,63 +273,35 @@ def get_performance():
                 # Initialize with sample data if no portfolio exists
                 portfolio = {
                     'initial_value': 1000000,
-                    'cash': 950000,
-                    'positions': {
-                        'AAPL': {
-                            'quantity': 100,
-                            'price': 175.50,
-                            'timestamp': datetime.now().isoformat(),
-                            'market_value': 17550,
-                            'unrealized_pnl': 550
-                        }
-                    },
-                    'trades': [
-                        {
-                            'time': (datetime.now() - timedelta(minutes=5)).isoformat(),
-                            'ticker': 'AAPL',
-                            'type': 'BUY',
-                            'price': 175.50,
-                            'quantity': 100,
-                            'total': 17550,
-                            'status': 'FILLED'
-                        }
-                    ],
+                    'cash': 1000000,
+                    'positions': {},
+                    'trades': [],
                     'daily_returns': [0.001, 0.002, -0.001, 0.003, -0.002],
-                    'total_trades': 1,
-                    'winning_trades': 1
+                    'total_trades': 0,
+                    'winning_trades': 0,
+                    'last_update': datetime.now().isoformat()
                 }
                 redis_client.set('portfolio_state', json.dumps(portfolio))
-        except Exception as e:
-            logger.error(f"Error accessing Redis: {str(e)}")
+                
+            # Calculate additional metrics
+            metrics = calculate_portfolio_metrics(portfolio)
+            portfolio.update(metrics)
+            
+            return format_api_response(data=portfolio)
+            
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(f"Redis connection error in get_performance: {str(e)}")
             return format_api_response(
                 status='error',
-                message='Failed to access portfolio data',
-                code=500
+                message='Service temporarily unavailable',
+                code=503
             )
-
-        # Calculate portfolio metrics
-        metrics = calculate_portfolio_metrics(portfolio)
-        
-        # Prepare performance data
-        performance_data = {
-            'portfolio_value': round(portfolio.get('initial_value', 1000000) + sum([pos.get('unrealized_pnl', 0) for pos in portfolio.get('positions', {}).values()]), 2),
-            'cash': round(portfolio.get('cash', 1000000), 2),
-            'daily_return': portfolio.get('daily_returns', [0])[-1] if portfolio.get('daily_returns') else 0,
-            'positions': portfolio.get('positions', {}),
-            'recent_trades': portfolio.get('trades', [])[-10:],
-            'daily_returns': portfolio.get('daily_returns', []),
-            'sharpe_ratio': metrics['sharpe_ratio'],
-            'win_rate': metrics['win_rate'],
-            'max_drawdown': metrics['max_drawdown']
-        }
-
-        return format_api_response(data=performance_data)
-
+            
     except Exception as e:
-        logger.error(f"Error in get_performance: {str(e)}\n{traceback.format_exc()}")
+        logger.error(f"Error in get_performance: {str(e)}")
         return format_api_response(
             status='error',
-            message='Failed to calculate performance metrics',
+            message='Failed to retrieve performance metrics',
             code=500
         )
 
