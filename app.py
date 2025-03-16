@@ -14,6 +14,10 @@ import threading
 import random
 import numpy as np
 import traceback
+import json
+from redis.retry import Retry
+from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError, TimeoutError
 
 # Configure logging
 logging.basicConfig(
@@ -29,19 +33,45 @@ app = Flask(__name__,
 )
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# Configure Redis for rate limiting
-redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-redis_client = redis.from_url(
-    redis_url,
-    ssl_cert_reqs=None,  # Disable SSL certificate verification
-    decode_responses=True  # Decode responses to UTF-8 strings
-)
+# Configure Redis with better error handling and retries
+def get_redis_client():
+    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+    retry = Retry(ExponentialBackoff(), 3)  # Retry 3 times with exponential backoff
+    
+    return redis.from_url(
+        redis_url,
+        ssl_cert_reqs=None,
+        decode_responses=True,
+        socket_timeout=5,  # 5 seconds timeout
+        socket_connect_timeout=5,
+        retry=retry
+    )
+
+try:
+    redis_client = get_redis_client()
+    redis_client.ping()  # Test connection
+    logger.info("Successfully connected to Redis")
+except (ConnectionError, TimeoutError) as e:
+    logger.error(f"Failed to connect to Redis: {str(e)}")
+    # Initialize in-memory fallback
+    class FallbackCache:
+        def __init__(self):
+            self._data = {}
+        def get(self, key):
+            return self._data.get(key)
+        def set(self, key, value, ex=None):
+            self._data[key] = value
+        def delete(self, key):
+            self._data.pop(key, None)
+    
+    redis_client = FallbackCache()
+    logger.info("Using in-memory fallback cache")
 
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    storage_uri=redis_url,
-    storage_options={"ssl_cert_reqs": None},  # Disable SSL certificate verification
+    storage_uri=os.getenv('REDIS_URL', 'redis://localhost:6379'),
+    storage_options={"ssl_cert_reqs": None},
     default_limits=["200 per day", "50 per hour"]
 )
 
@@ -121,80 +151,139 @@ def get_performance():
         if not signals:
             return jsonify({'status': 'error', 'message': 'No signals available'})
 
-        # Initialize portfolio metrics
-        portfolio_value = 1000000  # Starting with $1M
-        total_trades = 0
-        win_count = 0
-        daily_returns = []
+        # Get current portfolio state
+        portfolio = redis_client.get('portfolio_state')
+        if portfolio:
+            portfolio = json.loads(portfolio)
+        else:
+            # Initialize portfolio if not exists
+            portfolio = {
+                'initial_value': 1000000,
+                'cash': 1000000,
+                'positions': {},
+                'trades': [],
+                'daily_returns': [],
+                'total_trades': 0,
+                'winning_trades': 0
+            }
+            redis_client.set('portfolio_state', json.dumps(portfolio))
+
+        # Update positions based on current prices
+        portfolio_value = portfolio['cash']
+        daily_pnl = 0
         
-        # Process signals for portfolio stats
-        for signal in signals:  # Changed from signals.values() to signals
+        for signal in signals:
+            ticker = signal['ticker']
+            current_price = float(signal['current_price'])
+            
+            # Update position values
+            if ticker in portfolio['positions']:
+                position = portfolio['positions'][ticker]
+                old_value = position['quantity'] * position['price']
+                new_value = position['quantity'] * current_price
+                portfolio_value += new_value
+                daily_pnl += new_value - old_value
+
+        # Process new signals for trades
+        for signal in signals:
             momentum_score = float(signal['momentum_score'])
-            price_change = float(signal['price_change'])
+            ticker = signal['ticker']
+            current_price = float(signal['current_price'])
             
-            # Count trades and wins
-            if abs(momentum_score) > 0.1:  # Only count significant signals as trades
-                total_trades += 1
-                if (momentum_score > 0 and price_change > 0) or (momentum_score < 0 and price_change < 0):
-                    win_count += 1
-            
-            # Calculate daily return impact
-            position_size = abs(momentum_score) * 0.1  # Size position based on signal strength
-            daily_return = position_size * price_change
-            daily_returns.append(daily_return)
+            # Execute trades based on momentum signals
+            if abs(momentum_score) > 0.1:
+                position_size = abs(momentum_score) * portfolio_value * 0.1  # Size based on signal strength
+                quantity = int(position_size / current_price)
+                
+                if momentum_score > 0.1 and ticker not in portfolio['positions']:  # BUY
+                    if portfolio['cash'] >= position_size:
+                        portfolio['positions'][ticker] = {
+                            'quantity': quantity,
+                            'price': current_price,
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        portfolio['cash'] -= quantity * current_price
+                        portfolio['trades'].append({
+                            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            'ticker': ticker,
+                            'type': 'BUY',
+                            'price': current_price,
+                            'quantity': quantity
+                        })
+                        portfolio['total_trades'] += 1
+                
+                elif momentum_score < -0.1 and ticker in portfolio['positions']:  # SELL
+                    position = portfolio['positions'][ticker]
+                    sell_value = position['quantity'] * current_price
+                    portfolio['cash'] += sell_value
+                    
+                    # Calculate if winning trade
+                    if current_price > position['price']:
+                        portfolio['winning_trades'] += 1
+                    
+                    portfolio['trades'].append({
+                        'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'ticker': ticker,
+                        'type': 'SELL',
+                        'price': current_price,
+                        'quantity': position['quantity']
+                    })
+                    portfolio['total_trades'] += 1
+                    del portfolio['positions'][ticker]
+
+        # Calculate daily return
+        daily_return = daily_pnl / (portfolio_value - daily_pnl) if (portfolio_value - daily_pnl) > 0 else 0
+        portfolio['daily_returns'].append(daily_return)
         
-        # Calculate portfolio statistics
-        avg_daily_return = np.mean(daily_returns) if daily_returns else 0
-        volatility = np.std(daily_returns) if daily_returns else 0
-        sharpe_ratio = (avg_daily_return / volatility) * np.sqrt(252) if volatility else 0
-        max_drawdown = min(daily_returns) if daily_returns else 0
-        win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0
+        # Keep only last 30 days of returns
+        if len(portfolio['daily_returns']) > 30:
+            portfolio['daily_returns'] = portfolio['daily_returns'][-30:]
         
-        # Generate recent trades
-        recent_trades = []
-        for signal in signals:  # Changed from signals.values() to signals
-            if abs(float(signal['momentum_score'])) > 0.1:
-                trade = {
-                    'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'ticker': signal['ticker'],
-                    'type': 'BUY' if float(signal['momentum_score']) > 0 else 'SELL',
-                    'price': float(signal['current_price']),
-                    'quantity': int(100000 * abs(float(signal['momentum_score'])))  # Position size based on signal strength
-                }
-                recent_trades.append(trade)
+        # Calculate performance metrics
+        returns = np.array(portfolio['daily_returns'])
+        avg_daily_return = np.mean(returns) if len(returns) > 0 else 0
+        volatility = np.std(returns) if len(returns) > 0 else 0
+        sharpe_ratio = (avg_daily_return / volatility) * np.sqrt(252) if volatility > 0 else 0
+        max_drawdown = min(returns) if len(returns) > 0 else 0
+        win_rate = (portfolio['winning_trades'] / portfolio['total_trades'] * 100) if portfolio['total_trades'] > 0 else 0
         
-        # Sort trades by time (most recent first)
-        recent_trades.sort(key=lambda x: x['time'], reverse=True)
-        
-        # Generate performance data for the last 30 days
+        # Generate performance data for chart
         dates = [(datetime.now() - timedelta(days=x)).strftime('%Y-%m-%d') for x in range(30)]
-        cumulative_return = 1.0
         values = []
-        for _ in dates:
-            daily_change = np.random.normal(avg_daily_return, volatility)
-            cumulative_return *= (1 + daily_change)
-            values.append(portfolio_value * cumulative_return)
+        cumulative_return = 1.0
+        
+        for ret in portfolio['daily_returns']:
+            cumulative_return *= (1 + ret)
+            values.append(portfolio['initial_value'] * cumulative_return)
+        
+        # Pad with initial value if not enough data points
+        while len(values) < 30:
+            values.insert(0, portfolio['initial_value'])
+        
+        # Save updated portfolio state
+        redis_client.set('portfolio_state', json.dumps(portfolio))
         
         return jsonify({
             'status': 'success',
             'portfolio_stats': {
                 'portfolio_value': portfolio_value,
-                'daily_return': avg_daily_return * 100,  # Convert to percentage
+                'daily_return': daily_return * 100,  # Convert to percentage
                 'sharpe_ratio': sharpe_ratio,
                 'max_drawdown': max_drawdown * 100  # Convert to percentage
             },
             'strategy_performance': {
                 'win_rate': win_rate,
-                'profit_factor': (win_count / (total_trades - win_count)) if (total_trades - win_count) > 0 else 1.0
+                'profit_factor': (portfolio['winning_trades'] / (portfolio['total_trades'] - portfolio['winning_trades'])) 
+                                if (portfolio['total_trades'] - portfolio['winning_trades']) > 0 else 1.0
             },
             'model_metrics': {
-                'prediction_accuracy': win_rate,  # Using win rate as a proxy for prediction accuracy
-                'signal_strength': np.mean([abs(float(s['momentum_score'])) for s in signals]) * 100  # Average signal strength
+                'prediction_accuracy': win_rate,  # Using win rate as proxy
+                'signal_strength': np.mean([abs(float(s['momentum_score'])) for s in signals]) * 100
             },
-            'recent_trades': recent_trades[:10],  # Show only the 10 most recent trades
+            'recent_trades': portfolio['trades'][-10:],  # Show only the 10 most recent trades
             'performance_data': {
                 'dates': dates,
-                'values': values
+                'values': values[-30:]  # Last 30 days
             }
         })
     except Exception as e:
