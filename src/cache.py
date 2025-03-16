@@ -8,15 +8,25 @@ import logging
 import numpy as np
 import pandas as pd
 from typing import Any, Dict, Optional
+from redis.retry import Retry
+from redis.backoff import ExponentialBackoff
 
 logger = logging.getLogger(__name__)
 
-# Initialize Redis connection
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
+# Configure Redis with better connection handling
+redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+redis_retry = Retry(ExponentialBackoff(), 3)
+
 redis_client = redis.from_url(
-    REDIS_URL,
-    ssl_cert_reqs=None,  # Disable SSL certificate verification
-    decode_responses=False  # Don't decode responses to UTF-8 strings
+    redis_url,
+    ssl_cert_reqs=None,
+    decode_responses=True,
+    socket_timeout=10,
+    socket_connect_timeout=10,
+    retry_on_timeout=True,
+    retry=redis_retry,
+    max_connections=20,
+    health_check_interval=30
 )
 
 # Initialize requests-cache for Yahoo Finance API calls
@@ -115,12 +125,13 @@ def redis_cache(expire_time: int = 3600):
         return wrapper
     return decorator
 
-def clear_cache() -> None:
-    """Clear all cached data."""
+def clear_cache():
+    """Clear all cached data"""
     try:
         redis_client.flushall()
         requests_cache.clear()
         logger.info("Cache cleared successfully")
+        return True
     except Exception as e:
         logger.error(f"Error clearing cache: {str(e)}")
-        raise 
+        return False 
