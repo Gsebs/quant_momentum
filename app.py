@@ -199,55 +199,41 @@ def get_momentum_signals():
             
         signals = run_strategy(RELIABLE_TICKERS)
         if not signals:
-            # Return sample data if no signals available
-            sample_signals = [
-                {
-                    'ticker': 'AAPL',
-                    'momentum_score': 0.85,
-                    'current_price': 175.50,
-                    'signal': 'BUY',
-                    'change': '+2.3%'
-                },
-                {
-                    'ticker': 'MSFT',
-                    'momentum_score': 0.72,
-                    'current_price': 285.30,
-                    'signal': 'BUY',
-                    'change': '+1.8%'
-                },
-                {
-                    'ticker': 'GOOGL',
-                    'momentum_score': -0.45,
-                    'current_price': 125.20,
-                    'signal': 'SELL',
-                    'change': '-1.2%'
-                }
-            ]
             return format_api_response(
-                data=sample_signals,
-                status='success',
-                message='Sample data while updating signals'
+                status='error',
+                message='No signals available',
+                code=503
             )
         
-        # Sort signals by momentum score
+        # Sort signals by momentum score and execute trades
         if isinstance(signals, dict):
             signals_list = []
             for ticker, data in signals.items():
                 data['ticker'] = ticker
-                # Execute trade based on signal
-                if abs(data.get('momentum_score', 0)) >= 0.4:  # Only trade on strong signals
+                # Execute trade for any non-HOLD signal
+                if data['signal'] in ['BUY', 'SELL']:
                     trade = portfolio_manager.execute_trade(
                         ticker=ticker,
                         signal=data['signal'],
-                        momentum_score=data['momentum_score']
+                        momentum_score=data.get('momentum_score', 0)
                     )
                     if trade:
                         logger.info(f"Executed trade: {trade}")
+                        # Force portfolio update after trade
+                        portfolio_manager.update_positions()
+                        portfolio_manager.update_portfolio_history()
                 signals_list.append(data)
             signals = signals_list
             
         signals = sorted(signals, key=lambda x: abs(float(x.get('momentum_score', 0))), reverse=True)
-        return format_api_response(data=signals)
+        
+        # Get updated portfolio metrics after trades
+        metrics = portfolio_manager.get_portfolio_metrics()
+        
+        return format_api_response(data={
+            'signals': signals,
+            'portfolio': metrics
+        })
         
     except (ConnectionError, TimeoutError) as e:
         logger.error(f"Redis connection error in get_momentum_signals: {str(e)}")

@@ -80,35 +80,47 @@ class PortfolioManager:
             # Get current price
             current_price = self.get_current_prices([ticker]).get(ticker)
             if not current_price:
+                logger.error(f"Could not get price for {ticker}")
                 return None
             
-            # Determine position size (1-5% of portfolio based on momentum score)
+            # Aggressive position sizing (5-15% of portfolio based on momentum score)
             portfolio_value = self.get_portfolio_value()
-            position_size = min(abs(momentum_score) * 0.05, 0.05) * portfolio_value
-            quantity = int(position_size / current_price)
-            
-            if quantity == 0:
-                return None
+            base_position_size = 0.05  # 5% minimum position size
+            additional_size = min(abs(momentum_score) * 0.10, 0.10)  # Up to additional 10%
+            position_size = (base_position_size + additional_size) * portfolio_value
+            quantity = max(int(position_size / current_price), 1)  # Ensure at least 1 share
             
             trade = None
-            if signal == 'BUY' and self.cash >= current_price * quantity:
-                # Execute buy trade
-                trade = self.execute_buy(ticker, quantity, current_price)
+            if signal == 'BUY':
+                # Always try to buy if we have cash
+                if self.cash >= current_price * quantity:
+                    trade = self.execute_buy(ticker, quantity, current_price)
+                else:
+                    # Try with smaller quantity if not enough cash
+                    max_quantity = int(self.cash / current_price)
+                    if max_quantity > 0:
+                        trade = self.execute_buy(ticker, max_quantity, current_price)
             elif signal == 'SELL':
-                # Execute sell trade
                 if ticker in self.positions:
+                    # Sell existing position
                     trade = self.execute_sell(ticker, self.positions[ticker]['quantity'], current_price)
-                elif self.cash >= current_price * quantity:
-                    # Short selling (if allowed)
-                    trade = self.execute_short(ticker, quantity, current_price)
+                else:
+                    # Short selling with available cash as collateral
+                    if self.cash >= current_price * quantity:
+                        trade = self.execute_short(ticker, quantity, current_price)
             
             if trade:
                 self.trades.append(trade)
                 self.total_trades += 1
                 if trade.get('pnl', 0) > 0:
                     self.winning_trades += 1
-                self.save_portfolio_state()
+                
+                # Force immediate updates
+                self.update_positions()
                 self.update_portfolio_history()
+                self.save_portfolio_state()
+                
+                logger.info(f"Successfully executed trade: {trade}")
                 return trade
             
         except Exception as e:

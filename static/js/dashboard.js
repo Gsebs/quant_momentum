@@ -91,38 +91,29 @@ function initializeDashboard() {
 
 async function updateDashboard() {
     try {
-        // Fetch momentum signals
+        // Fetch momentum signals and portfolio data
         const signalsResponse = await fetch('/api/momentum-signals');
         if (!signalsResponse.ok) {
             throw new Error(`HTTP error! status: ${signalsResponse.status}`);
         }
-        const signalsData = await signalsResponse.json();
+        const responseData = await signalsResponse.json();
         
-        if (signalsData.status === 'error') {
-            throw new Error(signalsData.message);
+        if (responseData.status === 'error') {
+            throw new Error(responseData.message);
         }
         
-        // Fetch performance data
-        const performanceResponse = await fetch('/api/performance');
-        if (!performanceResponse.ok) {
-            throw new Error(`HTTP error! status: ${performanceResponse.status}`);
-        }
-        const performanceData = await performanceResponse.json();
-        
-        if (performanceData.status === 'error') {
-            throw new Error(performanceData.message);
-        }
-        
-        // Update UI components
-        if (signalsData.data) {
-            updateSignalsTable(signalsData.data);
-        }
-        
-        if (performanceData.data) {
-            updatePerformanceMetrics(performanceData.data);
-            updatePortfolioChart(performanceData.data);
-            updateTradesTable(performanceData.data.trades || []);
-            updatePositionsTable(performanceData.data.positions || {});
+        // Update UI components with signals and portfolio data
+        if (responseData.data) {
+            if (responseData.data.signals) {
+                updateSignalsTable(responseData.data.signals);
+            }
+            
+            if (responseData.data.portfolio) {
+                updatePerformanceMetrics(responseData.data.portfolio);
+                updatePortfolioChart(responseData.data.portfolio);
+                updateTradesTable(responseData.data.portfolio.trades || []);
+                updatePositionsTable(responseData.data.portfolio.positions || {});
+            }
         }
         
         // Update last update time
@@ -130,11 +121,12 @@ async function updateDashboard() {
         if (lastUpdate) {
             lastUpdate.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
         }
-            
+        
         // Clear any error messages
         clearAlertMessages();
         
     } catch (error) {
+        console.error('Dashboard update error:', error);
         showErrorMessage('Failed to update dashboard: ' + error.message);
     }
 }
@@ -182,38 +174,46 @@ function updateSignalsTable(signals) {
 
 function updatePerformanceMetrics(data) {
     try {
-        // Update portfolio value
+        // Update portfolio value with proper formatting
         const portfolioValue = document.querySelector('.portfolio-value');
         if (portfolioValue) {
-            portfolioValue.textContent = formatCurrency(data.portfolio_value || 0);
+            const value = data.portfolio_value || 0;
+            portfolioValue.textContent = formatCurrency(value);
+            portfolioValue.classList.remove('placeholder');
+        }
+        
+        // Update cash balance with proper formatting
+        const cashBalance = document.querySelector('.cash-balance');
+        if (cashBalance) {
+            const cash = data.cash || 0;
+            cashBalance.textContent = formatCurrency(cash);
+            cashBalance.classList.remove('placeholder');
+        }
+        
+        // Update daily return with proper formatting and color coding
+        const dailyReturnElement = document.querySelector('.daily-return');
+        if (dailyReturnElement) {
+            const dailyReturn = (data.daily_return || 0) * 100;
+            dailyReturnElement.textContent = `${dailyReturn >= 0 ? '+' : ''}${dailyReturn.toFixed(2)}%`;
+            dailyReturnElement.className = `daily-return ${dailyReturn >= 0 ? 'value-positive' : 'value-negative'}`;
+            dailyReturnElement.classList.remove('placeholder');
+        }
+        
+        // Update win rate with proper formatting
+        const winRate = document.querySelector('.win-rate');
+        if (winRate) {
+            const winRateValue = data.win_rate || 0;
+            winRate.textContent = `${winRateValue.toFixed(1)}%`;
+            winRate.classList.remove('placeholder');
         }
         
         // Update portfolio change
         const portfolioChange = document.querySelector('.portfolio-change');
         if (portfolioChange) {
-            const dailyReturn = (data.daily_return || 0) * 100;
-            portfolioChange.textContent = `${dailyReturn >= 0 ? '+' : ''}${dailyReturn.toFixed(2)}%`;
-            portfolioChange.className = `text-muted portfolio-change value-${dailyReturn >= 0 ? 'positive' : 'negative'}`;
-        }
-        
-        // Update cash balance
-        const cashBalance = document.querySelector('.cash-balance');
-        if (cashBalance) {
-            cashBalance.textContent = formatCurrency(data.cash || 0);
-        }
-        
-        // Update daily return
-        const dailyReturnElement = document.querySelector('.daily-return');
-        if (dailyReturnElement) {
-            const dailyReturn = (data.daily_return || 0) * 100;
-            dailyReturnElement.textContent = `${dailyReturn >= 0 ? '+' : ''}${dailyReturn.toFixed(2)}%`;
-            dailyReturnElement.className = `daily-return value-${dailyReturn >= 0 ? 'positive' : 'negative'}`;
-        }
-        
-        // Update win rate
-        const winRate = document.querySelector('.win-rate');
-        if (winRate) {
-            winRate.textContent = `${(data.win_rate || 0).toFixed(1)}%`;
+            const change = (data.daily_return || 0) * 100;
+            portfolioChange.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+            portfolioChange.className = `portfolio-change ${change >= 0 ? 'value-positive' : 'value-negative'}`;
+            portfolioChange.classList.remove('placeholder');
         }
     } catch (error) {
         console.error('Error updating performance metrics:', error);
