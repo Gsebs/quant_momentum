@@ -19,7 +19,7 @@ import requests
 import logging
 import bs4 as bs
 import yfinance as yf
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 import time
 from datetime import datetime, timedelta
 import pickle
@@ -435,55 +435,80 @@ def redis_cache(expire_time=300):
         return wrapper
     return decorator
 
-def get_stock_data(ticker):
+def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]:
     """
     Get stock data for a given ticker using yfinance.
+    Implements rate limiting and exponential backoff for API requests.
+    
+    Args:
+        ticker (str): The stock ticker symbol
+        
+    Returns:
+        Optional[Dict]: Dictionary containing stock data and metrics, or None if data retrieval fails
     """
-    logging.info(f"Fetching data for {ticker}")
-    try:
-        # Create a Ticker object
-        stock = yf.Ticker(ticker)
-        
-        # Verify the symbol exists by getting basic info
+    max_retries = 3
+    base_delay = 2  # Base delay in seconds
+    
+    for attempt in range(max_retries):
         try:
-            info = stock.info
-            if not info:
-                logging.error(f"No info available for {ticker}")
+            # Add delay with exponential backoff
+            if attempt > 0:
+                delay = base_delay * (2 ** (attempt - 1))
+                logging.info(f"Retrying {ticker} after {delay} seconds (attempt {attempt + 1}/{max_retries})")
+                time.sleep(delay)
+            
+            stock = yf.Ticker(ticker)
+            
+            # First try to get basic info to verify the ticker exists
+            try:
+                info = stock.info
+                if not info:
+                    logging.warning(f"No info available for {ticker}")
+                    return None
+            except Exception as e:
+                if "429" in str(e):  # Rate limit error
+                    raise  # Re-raise to trigger retry
+                logging.error(f"Error getting info for {ticker}: {str(e)}")
                 return None
-        except Exception as e:
-            logging.error(f"Error getting info for {ticker}: {str(e)}")
-            return None
             
-        # Get historical data for the last year
-        df = stock.history(period="1y", interval="1d")
-        
-        if df.empty:
-            logging.error(f"No data returned for {ticker}")
-            return None
+            # Add delay before historical data request
+            time.sleep(1)
             
-        # Verify required columns exist
-        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-        for col in required_columns:
-            if col not in df.columns:
-                logging.error(f"Missing required column {col} for {ticker}")
+            # Get historical data
+            data = stock.history(period="1y", interval="1d")
+            
+            if data.empty:
+                logging.warning(f"No historical data available for {ticker}")
                 return None
                 
-        # Calculate metrics
-        current_price = df['Close'].iloc[-1]
-        avg_volume = df['Volume'].mean()
-        price_change = ((current_price - df['Close'].iloc[0]) / df['Close'].iloc[0]) * 100
-        
-        logging.info(f"Successfully fetched data for {ticker}")
-        return {
-            'current_price': current_price,
-            'avg_volume': avg_volume,
-            'price_change': price_change,
-            'data': df
-        }
-        
-    except Exception as e:
-        logging.error(f"Error fetching data for {ticker}: {str(e)}")
-        return None
+            required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+            missing_columns = [col for col in required_columns if col not in data.columns]
+            if missing_columns:
+                logging.error(f"Missing required columns for {ticker}: {missing_columns}")
+                return None
+            
+            # Calculate metrics
+            current_price = data['Close'].iloc[-1]
+            avg_volume = data['Volume'].mean()
+            price_change = ((current_price - data['Close'].iloc[0]) / data['Close'].iloc[0]) * 100
+            
+            return {
+                'data': data,
+                'current_price': current_price,
+                'avg_volume': avg_volume,
+                'price_change': price_change
+            }
+            
+        except Exception as e:
+            if attempt == max_retries - 1:  # Last attempt
+                logging.error(f"Failed to get data for {ticker} after {max_retries} attempts: {str(e)}")
+                return None
+            if "429" not in str(e):  # If not a rate limit error, don't retry
+                logging.error(f"Error getting data for {ticker}: {str(e)}")
+                return None
+            continue  # Retry on rate limit error
+    
+    return None
 
 def get_batch_data(tickers: List[str]) -> List[Dict]:
     """

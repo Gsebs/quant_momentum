@@ -95,75 +95,100 @@ def save_signals_to_cache(signals: List[Dict]) -> None:
     except Exception as e:
         logger.error(f"Error saving signals to cache: {e}")
 
-def process_batch(tickers):
-    """Process a batch of tickers and return their momentum scores."""
-    results = []
+def process_batch(tickers: List[str]) -> Dict[str, Dict[str, float]]:
+    """
+    Process a batch of tickers and calculate their momentum scores.
+    Includes delays between processing individual tickers to avoid rate limiting.
+    
+    Args:
+        tickers (List[str]): List of stock tickers to process
+        
+    Returns:
+        Dict[str, Dict[str, float]]: Dictionary of tickers with their momentum scores and metrics
+    """
+    results = {}
     
     for ticker in tickers:
         try:
+            # Add delay between processing each ticker
+            time.sleep(2)
+            
             data = get_stock_data(ticker)
-            if data is None:
-                logging.warning(f"No data available for {ticker}")
+            if not data:
+                logging.warning(f"No data available for {ticker}, skipping")
                 continue
                 
+            df = data['data']
+            
             # Calculate momentum score
-            momentum_score = calculate_momentum_score(data['data'])
+            returns = df['Close'].pct_change()
+            momentum_score = calculate_momentum_score(returns)
             
-            results.append({
-                'ticker': ticker,
-                'current_price': data['current_price'],
-                'avg_volume': data['avg_volume'],
-                'price_change': data['price_change'],
-                'momentum_score': momentum_score
-            })
-            
+            if momentum_score is not None:
+                results[ticker] = {
+                    'momentum_score': momentum_score,
+                    'current_price': data['current_price'],
+                    'avg_volume': data['avg_volume'],
+                    'price_change': data['price_change']
+                }
+            else:
+                logging.warning(f"Could not calculate momentum score for {ticker}")
+                
         except Exception as e:
             logging.error(f"Error processing {ticker}: {str(e)}")
             continue
             
     return results
 
-def update_signals(tickers: List[str]):
-    """Update momentum signals for all tickers."""
-    try:
-        if not tickers:
-            logging.error("No tickers provided")
-            return
-            
-        # Process tickers in batches
-        batch_size = 10
-        all_signals = []
+def update_signals(tickers: List[str]) -> None:
+    """
+    Update momentum signals for all tickers with proper rate limiting.
+    
+    Args:
+        tickers (List[str]): List of stock tickers to process
+    """
+    if not tickers:
+        logging.error("No tickers provided for signal update")
+        return
         
-        for i in range(0, len(tickers), batch_size):
-            batch = tickers[i:i+batch_size]
-            try:
-                # Process the batch
-                signals = process_batch(batch)
-                all_signals.extend(signals)
-                
-                # Wait between batches to avoid rate limiting
-                if i + batch_size < len(tickers):
-                    logging.info("Waiting 30 seconds before next batch")
-                    time.sleep(30)
-                    
-            except Exception as e:
-                logging.error(f"Error processing batch: {str(e)}")
-                continue
-                
-        # Sort by momentum score
-        all_signals.sort(key=lambda x: x['momentum_score'], reverse=True)
+    logging.info(f"Starting signal update for {len(tickers)} tickers")
+    all_results = {}
+    batch_size = 5  # Reduced batch size
+    
+    # Process tickers in smaller batches with longer delays
+    for i in range(0, len(tickers), batch_size):
+        batch = tickers[i:i + batch_size]
+        logging.info(f"Processing batch {i//batch_size + 1}/{(len(tickers) + batch_size - 1)//batch_size}")
         
-        # Cache the results
         try:
-            cache_signals(all_signals)
-        except Exception as e:
-            logger.error(f"Error saving signals to cache: {e}")
+            batch_results = process_batch(batch)
+            all_results.update(batch_results)
             
-        return all_signals
+            # Add longer delay between batches
+            if i + batch_size < len(tickers):
+                delay = 60  # 60 second delay between batches
+                logging.info(f"Waiting {delay} seconds before next batch")
+                time.sleep(delay)
+                
+        except Exception as e:
+            logging.error(f"Error processing batch: {str(e)}")
+            continue
+    
+    if all_results:
+        # Sort results by momentum score
+        sorted_results = dict(sorted(
+            all_results.items(),
+            key=lambda x: x[1]['momentum_score'],
+            reverse=True
+        ))
         
-    except Exception as e:
-        logging.error(f"Error in update_signals: {str(e)}")
-        return None
+        try:
+            cache_signals(sorted_results)
+            logging.info(f"Successfully updated signals for {len(sorted_results)} tickers")
+        except Exception as e:
+            logging.error(f"Failed to cache signals: {str(e)}")
+    else:
+        logging.error("No valid results obtained from any batch")
 
 def run_strategy(tickers: List[str]) -> List[Dict]:
     """Run the momentum strategy on the given tickers."""
