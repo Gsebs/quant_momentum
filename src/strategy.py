@@ -95,100 +95,86 @@ def save_signals_to_cache(signals: List[Dict]) -> None:
     except Exception as e:
         logger.error(f"Error saving signals to cache: {e}")
 
-def process_batch(tickers: List[str]) -> Dict[str, Dict[str, float]]:
-    """
-    Process a batch of tickers and calculate their momentum scores.
-    Uses Redis-cached data when available to avoid rate limiting.
+def process_batch(tickers: List[str]) -> List[Dict]:
+    """Process a batch of tickers and calculate their momentum scores.
     
     Args:
-        tickers (List[str]): List of stock tickers to process
+        tickers: List of stock tickers to process
         
     Returns:
-        Dict[str, Dict[str, float]]: Dictionary of tickers with their momentum scores and metrics
+        List of dictionaries containing momentum scores and other metrics for each ticker
     """
-    results = {}
+    results = []
     
     for ticker in tickers:
         try:
-            # Get data with Redis caching
             data = get_stock_data(ticker)
-            if not data:
-                logging.warning(f"No data available for {ticker}, skipping")
+            if data is None:
+                logging.warning(f"No data available for {ticker}")
                 continue
-            
+                
             df = data['data']
+            current_price = data['current_price']
+            avg_volume = data['avg_volume']
+            price_change = data['price_change']
             
             # Calculate momentum score
-            returns = df['Close'].pct_change()
-            momentum_score = calculate_momentum_score(returns)
+            momentum_score = calculate_momentum_score(df)
             
-            if momentum_score is not None:
-                results[ticker] = {
-                    'momentum_score': momentum_score,
-                    'current_price': data['current_price'],
-                    'avg_volume': data['avg_volume'],
-                    'price_change': data['price_change']
-                }
-                logging.info(f"Successfully processed {ticker}")
-            else:
-                logging.warning(f"Could not calculate momentum score for {ticker}")
-                
+            results.append({
+                'ticker': ticker,
+                'momentum_score': momentum_score,
+                'current_price': current_price,
+                'avg_volume': avg_volume,
+                'price_change': price_change
+            })
+            
+            logging.info(f"Successfully processed {ticker}")
+            
         except Exception as e:
             logging.error(f"Error processing {ticker}: {str(e)}")
             continue
             
     return results
 
-def update_signals(tickers: List[str]) -> None:
-    """
-    Update momentum signals for all tickers with Redis caching support.
+def update_signals(tickers: List[str]):
+    """Update momentum signals for the given tickers.
     
     Args:
-        tickers (List[str]): List of stock tickers to process
+        tickers: List of stock tickers to process
     """
     if not tickers:
-        logging.error("No tickers provided for signal update")
+        logging.error("No tickers provided")
         return
-        
-    logging.info(f"Starting signal update for {len(tickers)} tickers")
-    all_results = {}
-    batch_size = 10  # Process in batches of 10
     
-    # Process tickers in batches
-    for i in range(0, len(tickers), batch_size):
-        batch = tickers[i:i + batch_size]
-        logging.info(f"Processing batch {i//batch_size + 1}/{(len(tickers) + batch_size - 1)//batch_size}")
+    try:
+        all_signals = []
+        total_batches = (len(tickers) + 9) // 10  # Round up division
         
-        try:
-            batch_results = process_batch(batch)
-            all_results.update(batch_results)
+        for batch_num in range(total_batches):
+            logging.info(f"Processing batch {batch_num + 1}/{total_batches}")
+            start_idx = batch_num * 10
+            end_idx = min(start_idx + 10, len(tickers))
+            batch = tickers[start_idx:end_idx]
             
-            # Add a small delay between batches to be safe
-            if i + batch_size < len(tickers):
-                delay = 5  # Short delay since we're using Redis caching
-                logging.info(f"Waiting {delay} seconds before next batch")
-                time.sleep(delay)
-                
-        except Exception as e:
-            logging.error(f"Error processing batch: {str(e)}")
-            continue
-    
-    if all_results:
-        # Sort results by momentum score
-        sorted_results = dict(sorted(
-            all_results.items(),
-            key=lambda x: x[1]['momentum_score'],
-            reverse=True
-        ))
+            batch_signals = process_batch(batch)
+            all_signals.extend(batch_signals)
+            
+            if batch_num < total_batches - 1:  # Don't wait after the last batch
+                logging.info("Waiting 5 seconds before next batch")
+                time.sleep(5)
         
+        # Sort signals by momentum score in descending order
+        all_signals.sort(key=lambda x: x['momentum_score'], reverse=True)
+        
+        # Cache the signals
         try:
-            # Cache the sorted results in Redis
-            cache_signals(sorted_results)
-            logging.info(f"Successfully updated signals for {len(sorted_results)} tickers")
+            redis_client.set('momentum_signals', pickle.dumps(all_signals), ex=3600)  # Cache for 1 hour
         except Exception as e:
             logging.error(f"Failed to cache signals: {str(e)}")
-    else:
-        logging.error("No valid results obtained from any batch")
+            
+    except Exception as e:
+        logging.error(f"Error updating signals: {str(e)}")
 
 def run_strategy(tickers: List[str]) -> List[Dict]:
     """Run the momentum strategy on the given tickers."""
