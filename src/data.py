@@ -446,7 +446,7 @@ def redis_cache(expire_time=300):
 
 def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]:
     """
-    Get stock data for a given ticker using yfinance with caching.
+    Get stock data for a given ticker using yfinance with Redis caching.
     
     Args:
         ticker (str): The stock ticker symbol
@@ -454,8 +454,20 @@ def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]
     Returns:
         Optional[Dict]: Dictionary containing stock data and metrics, or None if data retrieval fails
     """
+    cache_key = f"stock_data:{ticker}"
+    
+    try:
+        # Try to get cached data first
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            data = pickle.loads(cached_data)
+            logging.info(f"Retrieved cached data for {ticker}")
+            return data
+    except Exception as e:
+        logging.error(f"Error accessing Redis cache for {ticker}: {str(e)}")
+    
     max_retries = 3
-    base_delay = 5  # Increased base delay
+    base_delay = 5
     
     for attempt in range(max_retries):
         try:
@@ -464,8 +476,7 @@ def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]
                 logging.info(f"Retrying {ticker} after {delay} seconds (attempt {attempt + 1}/{max_retries})")
                 time.sleep(delay)
             
-            # Create Ticker object with our cached session
-            stock = yf.Ticker(ticker, session=session)
+            stock = yf.Ticker(ticker)
             
             # Get basic info first
             try:
@@ -479,13 +490,12 @@ def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]
                 logging.error(f"Error getting info for {ticker}: {str(e)}")
                 return None
             
-            # Get historical data with the cached session
+            # Get historical data
             data = stock.history(
                 period="1y",
                 interval="1d",
                 auto_adjust=True,
-                actions=False,
-                session=session
+                actions=False
             )
             
             if data.empty:
@@ -503,13 +513,26 @@ def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]
             avg_volume = data['Volume'].mean()
             price_change = ((current_price - data['Close'].iloc[0]) / data['Close'].iloc[0]) * 100
             
-            logging.info(f"Successfully fetched data for {ticker}")
-            return {
+            result = {
                 'data': data,
                 'current_price': current_price,
                 'avg_volume': avg_volume,
                 'price_change': price_change
             }
+            
+            # Cache the result in Redis for 1 hour
+            try:
+                redis_client.setex(
+                    cache_key,
+                    timedelta(hours=1),
+                    pickle.dumps(result)
+                )
+                logging.info(f"Cached data for {ticker}")
+            except Exception as e:
+                logging.error(f"Error caching data for {ticker}: {str(e)}")
+            
+            logging.info(f"Successfully fetched data for {ticker}")
+            return result
             
         except Exception as e:
             if attempt == max_retries - 1:

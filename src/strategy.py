@@ -98,7 +98,7 @@ def save_signals_to_cache(signals: List[Dict]) -> None:
 def process_batch(tickers: List[str]) -> Dict[str, Dict[str, float]]:
     """
     Process a batch of tickers and calculate their momentum scores.
-    Uses cached data when available to avoid rate limiting.
+    Uses Redis-cached data when available to avoid rate limiting.
     
     Args:
         tickers (List[str]): List of stock tickers to process
@@ -110,7 +110,7 @@ def process_batch(tickers: List[str]) -> Dict[str, Dict[str, float]]:
     
     for ticker in tickers:
         try:
-            # Get data with caching
+            # Get data with Redis caching
             data = get_stock_data(ticker)
             if not data:
                 logging.warning(f"No data available for {ticker}, skipping")
@@ -141,7 +141,7 @@ def process_batch(tickers: List[str]) -> Dict[str, Dict[str, float]]:
 
 def update_signals(tickers: List[str]) -> None:
     """
-    Update momentum signals for all tickers with caching support.
+    Update momentum signals for all tickers with Redis caching support.
     
     Args:
         tickers (List[str]): List of stock tickers to process
@@ -152,7 +152,7 @@ def update_signals(tickers: List[str]) -> None:
         
     logging.info(f"Starting signal update for {len(tickers)} tickers")
     all_results = {}
-    batch_size = 10  # Increased batch size since we're using caching
+    batch_size = 10  # Process in batches of 10
     
     # Process tickers in batches
     for i in range(0, len(tickers), batch_size):
@@ -165,7 +165,7 @@ def update_signals(tickers: List[str]) -> None:
             
             # Add a small delay between batches to be safe
             if i + batch_size < len(tickers):
-                delay = 10  # Reduced delay since we're using caching
+                delay = 5  # Short delay since we're using Redis caching
                 logging.info(f"Waiting {delay} seconds before next batch")
                 time.sleep(delay)
                 
@@ -182,6 +182,7 @@ def update_signals(tickers: List[str]) -> None:
         ))
         
         try:
+            # Cache the sorted results in Redis
             cache_signals(sorted_results)
             logging.info(f"Successfully updated signals for {len(sorted_results)} tickers")
         except Exception as e:
