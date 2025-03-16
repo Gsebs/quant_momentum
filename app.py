@@ -15,6 +15,7 @@ import traceback
 import json
 from src.strategy import run_strategy, get_cached_signals, RELIABLE_TICKERS
 from src.cache import redis_client, clear_cache
+from src.trading import PortfolioManager
 
 # Configure logging with more detailed format
 logging.basicConfig(
@@ -63,6 +64,9 @@ limiter = Limiter(
     storage_options={"ssl_cert_reqs": None},
     default_limits=["200 per day", "50 per hour"]
 )
+
+# Initialize portfolio manager
+portfolio_manager = PortfolioManager(initial_capital=1000000.0)
 
 # Initialize portfolio state if not exists
 def initialize_portfolio_state():
@@ -183,7 +187,7 @@ def home():
 @app.route('/api/momentum-signals', methods=['GET'])
 @limiter.exempt
 def get_momentum_signals():
-    """Get momentum signals for stocks"""
+    """Get momentum signals for stocks and execute trades"""
     try:
         if redis_client is None:
             logger.error("Redis connection not available")
@@ -230,6 +234,15 @@ def get_momentum_signals():
             signals_list = []
             for ticker, data in signals.items():
                 data['ticker'] = ticker
+                # Execute trade based on signal
+                if abs(data.get('momentum_score', 0)) >= 0.4:  # Only trade on strong signals
+                    trade = portfolio_manager.execute_trade(
+                        ticker=ticker,
+                        signal=data['signal'],
+                        momentum_score=data['momentum_score']
+                    )
+                    if trade:
+                        logger.info(f"Executed trade: {trade}")
                 signals_list.append(data)
             signals = signals_list
             
@@ -264,39 +277,17 @@ def get_performance():
                 code=503
             )
             
-        # Get current portfolio state
-        try:
-            portfolio = redis_client.get('portfolio_state')
-            if portfolio:
-                portfolio = json.loads(portfolio)
-            else:
-                # Initialize with sample data if no portfolio exists
-                portfolio = {
-                    'initial_value': 1000000,
-                    'cash': 1000000,
-                    'positions': {},
-                    'trades': [],
-                    'daily_returns': [0.001, 0.002, -0.001, 0.003, -0.002],
-                    'total_trades': 0,
-                    'winning_trades': 0,
-                    'last_update': datetime.now().isoformat()
-                }
-                redis_client.set('portfolio_state', json.dumps(portfolio))
-                
-            # Calculate additional metrics
-            metrics = calculate_portfolio_metrics(portfolio)
-            portfolio.update(metrics)
+        # Get portfolio metrics
+        metrics = portfolio_manager.get_portfolio_metrics()
+        return format_api_response(data=metrics)
             
-            return format_api_response(data=portfolio)
-            
-        except (ConnectionError, TimeoutError) as e:
-            logger.error(f"Redis connection error in get_performance: {str(e)}")
-            return format_api_response(
-                status='error',
-                message='Service temporarily unavailable',
-                code=503
-            )
-            
+    except (ConnectionError, TimeoutError) as e:
+        logger.error(f"Redis connection error in get_performance: {str(e)}")
+        return format_api_response(
+            status='error',
+            message='Service temporarily unavailable',
+            code=503
+        )
     except Exception as e:
         logger.error(f"Error in get_performance: {str(e)}")
         return format_api_response(

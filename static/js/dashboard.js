@@ -23,7 +23,12 @@ const chartConfig = {
             },
             tooltip: {
                 mode: 'index',
-                intersect: false
+                intersect: false,
+                callbacks: {
+                    label: function(context) {
+                        return `$${parseFloat(context.raw).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                    }
+                }
             }
         },
         scales: {
@@ -36,6 +41,11 @@ const chartConfig = {
                 beginAtZero: false,
                 grid: {
                     color: 'rgba(0, 0, 0, 0.05)'
+                },
+                ticks: {
+                    callback: function(value) {
+                        return '$' + value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+                    }
                 }
             }
         },
@@ -83,6 +93,9 @@ async function updateDashboard() {
     try {
         // Fetch momentum signals
         const signalsResponse = await fetch('/api/momentum-signals');
+        if (!signalsResponse.ok) {
+            throw new Error(`HTTP error! status: ${signalsResponse.status}`);
+        }
         const signalsData = await signalsResponse.json();
         
         if (signalsData.status === 'error') {
@@ -91,6 +104,9 @@ async function updateDashboard() {
         
         // Fetch performance data
         const performanceResponse = await fetch('/api/performance');
+        if (!performanceResponse.ok) {
+            throw new Error(`HTTP error! status: ${performanceResponse.status}`);
+        }
         const performanceData = await performanceResponse.json();
         
         if (performanceData.status === 'error') {
@@ -98,15 +114,22 @@ async function updateDashboard() {
         }
         
         // Update UI components
-        updateSignalsTable(signalsData.data);
-        updatePerformanceMetrics(performanceData.data);
-        updatePortfolioChart(performanceData.data);
-        updateTradesTable(performanceData.data.recent_trades);
-        updatePositionsTable(performanceData.data.positions);
+        if (signalsData.data) {
+            updateSignalsTable(signalsData.data);
+        }
+        
+        if (performanceData.data) {
+            updatePerformanceMetrics(performanceData.data);
+            updatePortfolioChart(performanceData.data);
+            updateTradesTable(performanceData.data.trades || []);
+            updatePositionsTable(performanceData.data.positions || {});
+        }
         
         // Update last update time
-        document.querySelector('.last-update').textContent = 
-            `Last updated: ${new Date().toLocaleTimeString()}`;
+        const lastUpdate = document.querySelector('.last-update');
+        if (lastUpdate) {
+            lastUpdate.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+        }
             
         // Clear any error messages
         clearAlertMessages();
@@ -116,19 +139,39 @@ async function updateDashboard() {
     }
 }
 
+function formatCurrency(value) {
+    return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    }).format(value);
+}
+
+function formatPercentage(value) {
+    return new Intl.NumberFormat('en-US', {
+        style: 'percent',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    }).format(value / 100);
+}
+
 function updateSignalsTable(signals) {
     const tbody = document.getElementById('signalsTable');
+    if (!tbody) return;
+    
     tbody.innerHTML = '';
     
     signals.forEach(signal => {
         const row = document.createElement('tr');
+        const score = parseFloat(signal.momentum_score);
         row.innerHTML = `
             <td>${signal.ticker}</td>
-            <td class="value-${signal.momentum_score > 0 ? 'positive' : 'negative'}">
-                ${signal.momentum_score.toFixed(2)}
+            <td class="value-${score > 0 ? 'positive' : 'negative'}">
+                ${score.toFixed(2)}
             </td>
             <td class="signal-${signal.signal.toLowerCase()}">${signal.signal}</td>
-            <td>$${signal.current_price.toFixed(2)}</td>
+            <td>${formatCurrency(signal.current_price)}</td>
             <td class="value-${signal.change.startsWith('+') ? 'positive' : 'negative'}">
                 ${signal.change}
             </td>
@@ -138,88 +181,130 @@ function updateSignalsTable(signals) {
 }
 
 function updatePerformanceMetrics(data) {
-    // Update portfolio value
-    const portfolioValue = document.querySelector('.portfolio-value');
-    portfolioValue.textContent = `$${data.portfolio_value.toLocaleString()}`;
-    
-    // Update portfolio change
-    const portfolioChange = document.querySelector('.portfolio-change');
-    const dailyReturn = data.daily_return * 100;
-    portfolioChange.textContent = `${dailyReturn >= 0 ? '+' : ''}${dailyReturn.toFixed(2)}%`;
-    portfolioChange.className = `text-muted portfolio-change value-${dailyReturn >= 0 ? 'positive' : 'negative'}`;
-    
-    // Update cash balance
-    document.querySelector('.cash-balance').textContent = 
-        `$${data.cash.toLocaleString()}`;
-    
-    // Update daily return
-    document.querySelector('.daily-return').textContent = 
-        `${dailyReturn >= 0 ? '+' : ''}${dailyReturn.toFixed(2)}%`;
-    
-    // Update win rate
-    document.querySelector('.win-rate').textContent = 
-        `${data.win_rate.toFixed(1)}%`;
+    try {
+        // Update portfolio value
+        const portfolioValue = document.querySelector('.portfolio-value');
+        if (portfolioValue) {
+            portfolioValue.textContent = formatCurrency(data.portfolio_value || 0);
+        }
+        
+        // Update portfolio change
+        const portfolioChange = document.querySelector('.portfolio-change');
+        if (portfolioChange) {
+            const dailyReturn = (data.daily_return || 0) * 100;
+            portfolioChange.textContent = `${dailyReturn >= 0 ? '+' : ''}${dailyReturn.toFixed(2)}%`;
+            portfolioChange.className = `text-muted portfolio-change value-${dailyReturn >= 0 ? 'positive' : 'negative'}`;
+        }
+        
+        // Update cash balance
+        const cashBalance = document.querySelector('.cash-balance');
+        if (cashBalance) {
+            cashBalance.textContent = formatCurrency(data.cash || 0);
+        }
+        
+        // Update daily return
+        const dailyReturnElement = document.querySelector('.daily-return');
+        if (dailyReturnElement) {
+            const dailyReturn = (data.daily_return || 0) * 100;
+            dailyReturnElement.textContent = `${dailyReturn >= 0 ? '+' : ''}${dailyReturn.toFixed(2)}%`;
+            dailyReturnElement.className = `daily-return value-${dailyReturn >= 0 ? 'positive' : 'negative'}`;
+        }
+        
+        // Update win rate
+        const winRate = document.querySelector('.win-rate');
+        if (winRate) {
+            winRate.textContent = `${(data.win_rate || 0).toFixed(1)}%`;
+        }
+    } catch (error) {
+        console.error('Error updating performance metrics:', error);
+    }
 }
 
 function updatePortfolioChart(data) {
-    // Update chart data
-    const returns = data.daily_returns || [];
-    const dates = returns.map((_, i) => {
-        const date = new Date();
-        date.setDate(date.getDate() - (returns.length - i - 1));
-        return date.toLocaleDateString();
-    });
-    
-    performanceChart.data.labels = dates;
-    performanceChart.data.datasets[0].data = returns.map(r => (1 + r).toFixed(4));
-    performanceChart.update();
+    try {
+        if (!data.portfolio_history || !Array.isArray(data.portfolio_history)) {
+            console.warn('No portfolio history data available');
+            return;
+        }
+        
+        const history = data.portfolio_history;
+        const dates = history.map(item => new Date(item.timestamp).toLocaleDateString());
+        const values = history.map(item => item.value);
+        
+        performanceChart.data.labels = dates;
+        performanceChart.data.datasets[0].data = values;
+        performanceChart.update();
+    } catch (error) {
+        console.error('Error updating portfolio chart:', error);
+    }
 }
 
 function updateTradesTable(trades) {
     const tbody = document.getElementById('tradesTable');
+    if (!tbody) return;
+    
     tbody.innerHTML = '';
     
     trades.forEach(trade => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td>${new Date(trade.time).toLocaleString()}</td>
-            <td>${trade.ticker}</td>
-            <td class="signal-${trade.type.toLowerCase()}">${trade.type}</td>
-            <td>$${trade.price.toFixed(2)}</td>
-            <td>${trade.quantity}</td>
-            <td>$${trade.total.toFixed(2)}</td>
-            <td>
-                <span class="badge bg-${trade.status === 'FILLED' ? 'success' : 'warning'}">
-                    ${trade.status}
-                </span>
-            </td>
-        `;
-        tbody.appendChild(row);
+        try {
+            const row = document.createElement('tr');
+            const tradeTime = new Date(trade.time);
+            
+            if (isNaN(tradeTime.getTime())) {
+                console.warn('Invalid trade time:', trade.time);
+                return;
+            }
+            
+            row.innerHTML = `
+                <td>${tradeTime.toLocaleString()}</td>
+                <td>${trade.ticker}</td>
+                <td class="signal-${trade.type.toLowerCase()}">${trade.type}</td>
+                <td>${formatCurrency(trade.price)}</td>
+                <td>${trade.quantity}</td>
+                <td>${formatCurrency(trade.total)}</td>
+                <td>
+                    <span class="badge bg-${trade.status === 'FILLED' ? 'success' : 'warning'}">
+                        ${trade.status}
+                    </span>
+                </td>
+            `;
+            tbody.appendChild(row);
+        } catch (error) {
+            console.error('Error adding trade row:', error);
+        }
     });
 }
 
 function updatePositionsTable(positions) {
     const tbody = document.getElementById('positionsTable');
+    if (!tbody) return;
+    
     tbody.innerHTML = '';
     
     Object.entries(positions).forEach(([ticker, position]) => {
-        const pnl = position.unrealized_pnl;
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td>${ticker}</td>
-            <td>${position.quantity}</td>
-            <td>$${position.price.toFixed(2)}</td>
-            <td>$${(position.market_value / position.quantity).toFixed(2)}</td>
-            <td class="value-${pnl >= 0 ? 'positive' : 'negative'}">
-                ${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}
-            </td>
-        `;
-        tbody.appendChild(row);
+        try {
+            const pnl = position.unrealized_pnl || 0;
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${ticker}</td>
+                <td>${position.quantity}</td>
+                <td>${formatCurrency(position.price)}</td>
+                <td>${formatCurrency(position.market_value / position.quantity)}</td>
+                <td class="value-${pnl >= 0 ? 'positive' : 'negative'}">
+                    ${pnl >= 0 ? '+' : ''}${formatCurrency(Math.abs(pnl))}
+                </td>
+            `;
+            tbody.appendChild(row);
+        } catch (error) {
+            console.error('Error adding position row:', error);
+        }
     });
 }
 
 function showErrorMessage(message) {
     const alertContainer = document.getElementById('alertMessages');
+    if (!alertContainer) return;
+    
     const alert = document.createElement('div');
     alert.className = 'alert alert-danger alert-dismissible fade show';
     alert.innerHTML = `
@@ -227,9 +312,16 @@ function showErrorMessage(message) {
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     `;
     alertContainer.appendChild(alert);
+    
+    // Auto-remove alert after 5 seconds
+    setTimeout(() => {
+        alert.remove();
+    }, 5000);
 }
 
 function clearAlertMessages() {
     const alertContainer = document.getElementById('alertMessages');
-    alertContainer.innerHTML = '';
+    if (alertContainer) {
+        alertContainer.innerHTML = '';
+    }
 } 
