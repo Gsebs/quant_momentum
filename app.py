@@ -13,6 +13,7 @@ import redis
 import threading
 import random
 import numpy as np
+import traceback
 
 # Configure logging
 logging.basicConfig(
@@ -124,115 +125,90 @@ def get_momentum_signals():
 @limiter.limit("30/minute")
 def get_performance():
     try:
-        report_file = 'data/reports/momentum_report.xlsx'
-        signals_file = 'data/momentum_signals.xlsx'
-        
-        # Initialize portfolio with $1,000,000
-        INITIAL_PORTFOLIO = 1000000.0
-        
-        # Get momentum signals
-        signals = run_strategy(RELIABLE_TICKERS)
-        
+        signals = get_cached_signals()
         if not signals:
-            signals = {}
-            
-        # Calculate portfolio statistics
-        total_value = INITIAL_PORTFOLIO
-        daily_returns = []
-        win_count = 0
+            return jsonify({'status': 'error', 'message': 'No signals available'})
+
+        # Initialize portfolio metrics
+        portfolio_value = 1000000  # Starting with $1M
         total_trades = 0
+        win_count = 0
+        daily_returns = []
         
-        for signal in signals.values():
-            momentum_score = float(signal.get('momentum_score', 0))
-            price_change = float(signal.get('price_change', 0))
+        # Process signals for portfolio stats
+        for signal in signals:  # Changed from signals.values() to signals
+            momentum_score = float(signal['momentum_score'])
+            price_change = float(signal['price_change'])
             
-            # Simulate position size based on momentum score
-            position_size = abs(momentum_score) * INITIAL_PORTFOLIO * 0.1  # 10% max per position
+            # Count trades and wins
+            if abs(momentum_score) > 0.1:  # Only count significant signals as trades
+                total_trades += 1
+                if (momentum_score > 0 and price_change > 0) or (momentum_score < 0 and price_change < 0):
+                    win_count += 1
             
-            # Calculate trade P&L
-            trade_pl = position_size * price_change
-            total_value += trade_pl
-            
-            if trade_pl > 0:
-                win_count += 1
-            total_trades += 1
-            
-            daily_returns.append(price_change)
+            # Calculate daily return impact
+            position_size = abs(momentum_score) * 0.1  # Size position based on signal strength
+            daily_return = position_size * price_change
+            daily_returns.append(daily_return)
         
-        # Calculate risk metrics
-        daily_returns = np.array(daily_returns)
-        avg_daily_return = np.mean(daily_returns) if len(daily_returns) > 0 else 0
-        volatility = np.std(daily_returns) * np.sqrt(252) if len(daily_returns) > 0 else 0
-        sharpe_ratio = (avg_daily_return * 252) / volatility if volatility != 0 else 0
-        max_drawdown = abs(min(daily_returns)) if len(daily_returns) > 0 else 0
+        # Calculate portfolio statistics
+        avg_daily_return = np.mean(daily_returns) if daily_returns else 0
+        volatility = np.std(daily_returns) if daily_returns else 0
+        sharpe_ratio = (avg_daily_return / volatility) * np.sqrt(252) if volatility else 0
+        max_drawdown = min(daily_returns) if daily_returns else 0
         win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0
         
-        # Generate recent trades based on momentum signals
+        # Generate recent trades
         recent_trades = []
-        for ticker, signal in signals.items():
-            momentum_score = float(signal.get('momentum_score', 0))
-            current_price = float(signal.get('current_price', 0))
-            
-            if abs(momentum_score) > 0.1:  # Only generate trades for significant signals
-                trade_type = 'BUY' if momentum_score > 0 else 'SELL'
-                position_size = int((abs(momentum_score) * INITIAL_PORTFOLIO * 0.1) / current_price)
-                
-                recent_trades.append({
+        for signal in signals:  # Changed from signals.values() to signals
+            if abs(float(signal['momentum_score'])) > 0.1:
+                trade = {
                     'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'ticker': ticker,
-                    'type': trade_type,
-                    'price': current_price,
-                    'quantity': position_size
-                })
+                    'ticker': signal['ticker'],
+                    'type': 'BUY' if float(signal['momentum_score']) > 0 else 'SELL',
+                    'price': float(signal['current_price']),
+                    'quantity': int(100000 * abs(float(signal['momentum_score'])))  # Position size based on signal strength
+                }
+                recent_trades.append(trade)
         
-        # Sort trades by time (most recent first) and limit to last 10
-        recent_trades = sorted(recent_trades, key=lambda x: x['time'], reverse=True)[:10]
+        # Sort trades by time (most recent first)
+        recent_trades.sort(key=lambda x: x['time'], reverse=True)
         
-        # Generate performance data (last 30 days)
-        dates = [(datetime.now() - timedelta(days=x)).strftime('%Y-%m-%d') for x in range(30, 0, -1)]
-        
-        # Generate realistic performance values with momentum trend
-        values = []
-        current_value = INITIAL_PORTFOLIO
+        # Generate performance data for the last 30 days
+        dates = [(datetime.now() - timedelta(days=x)).strftime('%Y-%m-%d') for x in range(30)]
         cumulative_return = 1.0
-        
-        for i in range(30):
-            daily_change = avg_daily_return + (np.random.normal(0, volatility/np.sqrt(252)))
+        values = []
+        for _ in dates:
+            daily_change = np.random.normal(avg_daily_return, volatility)
             cumulative_return *= (1 + daily_change)
-            current_value = INITIAL_PORTFOLIO * cumulative_return
-            values.append(round(current_value, 2))
-
+            values.append(portfolio_value * cumulative_return)
+        
         return jsonify({
             'status': 'success',
             'portfolio_stats': {
-                'portfolio_value': round(total_value, 2),
-                'daily_return': round(avg_daily_return * 100, 2),
-                'sharpe_ratio': round(sharpe_ratio, 2),
-                'max_drawdown': round(max_drawdown * 100, 2)
+                'portfolio_value': portfolio_value,
+                'daily_return': avg_daily_return * 100,  # Convert to percentage
+                'sharpe_ratio': sharpe_ratio,
+                'max_drawdown': max_drawdown * 100  # Convert to percentage
             },
             'strategy_performance': {
-                'win_rate': round(win_rate, 2),
-                'profit_factor': round((win_count / total_trades) if total_trades > 0 else 0, 2),
-                'total_trades': total_trades,
-                'volatility': round(volatility * 100, 2)
+                'win_rate': win_rate,
+                'profit_factor': (win_count / (total_trades - win_count)) if (total_trades - win_count) > 0 else 1.0
             },
             'model_metrics': {
-                'prediction_accuracy': round(win_rate, 2),
-                'signal_strength': round(np.mean([abs(s.get('momentum_score', 0)) for s in signals.values()]), 2)
+                'prediction_accuracy': win_rate,  # Using win rate as a proxy for prediction accuracy
+                'signal_strength': np.mean([abs(float(s['momentum_score'])) for s in signals]) * 100  # Average signal strength
             },
-            'recent_trades': recent_trades,
+            'recent_trades': recent_trades[:10],  # Show only the 10 most recent trades
             'performance_data': {
                 'dates': dates,
                 'values': values
             }
         })
-        
     except Exception as e:
-        logger.error(f"Error retrieving performance data: {str(e)}", exc_info=True)
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        app.logger.error(f"Error retrieving performance data: {str(e)}")
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/charts/<filename>', methods=['GET'])
 @limiter.limit("60/minute")

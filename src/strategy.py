@@ -80,7 +80,15 @@ def get_cached_signals() -> Optional[List[Dict]]:
     try:
         cached = redis_client.get('momentum_signals')
         if cached:
-            return pickle.loads(cached)
+            signals = pickle.loads(cached)
+            # Convert dictionary to list of dictionaries with ticker included
+            if isinstance(signals, dict):
+                signals_list = []
+                for ticker, data in signals.items():
+                    data['ticker'] = ticker
+                    signals_list.append(data)
+                return signals_list
+            return signals
         return None
     except Exception as e:
         logger.error(f"Error getting cached signals: {e}")
