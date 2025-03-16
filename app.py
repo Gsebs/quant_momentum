@@ -16,6 +16,8 @@ import json
 from redis.retry import Retry
 from redis.backoff import ExponentialBackoff
 from redis.exceptions import ConnectionError, TimeoutError
+from src.strategy import run_strategy, get_cached_signals
+from src.cache import redis_client
 
 # Configure logging with more detailed format
 logging.basicConfig(
