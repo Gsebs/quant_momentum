@@ -1,6 +1,7 @@
 // Initialize performance chart
 let performanceChart;
 let lastUpdateTime = new Date();
+let isLoading = false;
 
 // Initialize the dashboard
 document.addEventListener('DOMContentLoaded', function() {
@@ -8,7 +9,32 @@ document.addEventListener('DOMContentLoaded', function() {
     updateDashboard();
     // Update every 30 seconds
     setInterval(updateDashboard, 30000);
+    
+    // Add tooltips to metrics
+    addTooltips();
 });
+
+// Add tooltips to explain metrics
+function addTooltips() {
+    const tooltips = {
+        'portfolioValue': 'Current total value of all positions',
+        'dailyReturn': 'Percentage return for the current trading day',
+        'sharpeRatio': 'Risk-adjusted return metric (higher is better)',
+        'maxDrawdown': 'Largest peak-to-trough decline',
+        'winRate': 'Percentage of profitable trades',
+        'profitFactor': 'Ratio of winning trades to losing trades',
+        'modelAccuracy': 'Percentage of correct predictions',
+        'signalStrength': 'Average strength of current momentum signals'
+    };
+    
+    Object.entries(tooltips).forEach(([id, text]) => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.setAttribute('title', text);
+            element.style.cursor = 'help';
+        }
+    });
+}
 
 // Initialize the performance chart with improved styling
 function initializeChart() {
@@ -97,21 +123,26 @@ function initializeChart() {
 
 // Update the dashboard with latest data
 async function updateDashboard() {
+    if (isLoading) return;
+    
     try {
+        isLoading = true;
+        showLoadingState(true);
+        
         // Update momentum signals
-        const signalsResponse = await fetch('/api/momentum-signals');
+        const signalsResponse = await fetch('/api/signals');
         const signalsData = await signalsResponse.json();
         
         // Update performance data
         const performanceResponse = await fetch('/api/performance');
         const performanceData = await performanceResponse.json();
         
-        if (performanceData.status === 'success' && signalsData.status === 'success') {
+        if (performanceData.status === 'success') {
             // Update all metrics
             updatePortfolioStats(performanceData.portfolio_stats);
             updateStrategyPerformance(performanceData.strategy_performance);
             updateModelMetrics(performanceData.model_metrics);
-            updateSignalsTable(signalsData.data);
+            updateSignalsTable(signalsData);
             updatePerformanceChart(performanceData.performance_data);
             updateRecentTrades(performanceData.recent_trades);
             
@@ -122,32 +153,95 @@ async function updateDashboard() {
             lastUpdateTime = new Date();
             document.getElementById('last-update').textContent = 
                 `Last updated: ${lastUpdateTime.toLocaleTimeString()}`;
+                
+            showError(null);
+        } else {
+            showError('Failed to update dashboard data');
         }
     } catch (error) {
         console.error('Error updating dashboard:', error);
+        showError('Failed to connect to server');
+    } finally {
+        isLoading = false;
+        showLoadingState(false);
     }
 }
 
-// Update the signals table with improved formatting
+// Show/hide loading state
+function showLoadingState(show) {
+    const elements = document.querySelectorAll('.loading-indicator');
+    elements.forEach(el => {
+        el.style.display = show ? 'block' : 'none';
+    });
+    
+    const tables = document.querySelectorAll('table');
+    tables.forEach(table => {
+        table.style.opacity = show ? '0.6' : '1';
+    });
+}
+
+// Show/hide error message
+function showError(message) {
+    const errorDiv = document.getElementById('error-message');
+    if (errorDiv) {
+        if (message) {
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        } else {
+            errorDiv.style.display = 'none';
+        }
+    }
+}
+
+// Update the signals table with improved formatting and signal strength visualization
 function updateSignalsTable(signals) {
     const tbody = document.getElementById('signalsTable').getElementsByTagName('tbody')[0];
     tbody.innerHTML = '';
     
-    Object.entries(signals).forEach(([ticker, signal]) => {
+    if (!Array.isArray(signals)) {
+        signals = Object.entries(signals).map(([ticker, signal]) => ({
+            ticker,
+            ...signal
+        }));
+    }
+    
+    signals.forEach((signal) => {
         const row = tbody.insertRow();
         row.className = 'signal-row';
         
         // Ticker
         const tickerCell = row.insertCell(0);
-        tickerCell.textContent = ticker;
+        tickerCell.textContent = signal.ticker;
         tickerCell.className = 'fw-bold';
         
-        // Signal
+        // Signal with strength visualization
         const signalCell = row.insertCell(1);
         const momentum_score = parseFloat(signal.momentum_score);
         const signalType = momentum_score > 0.1 ? 'BUY' : momentum_score < -0.1 ? 'SELL' : 'HOLD';
-        signalCell.textContent = signalType;
-        signalCell.className = `${signalType === 'BUY' ? 'positive' : signalType === 'SELL' ? 'negative' : 'neutral'} fw-bold`;
+        
+        // Create signal strength bar
+        const strengthBar = document.createElement('div');
+        strengthBar.className = 'signal-strength-bar';
+        strengthBar.style.width = '60px';
+        strengthBar.style.height = '8px';
+        strengthBar.style.backgroundColor = '#e9ecef';
+        strengthBar.style.borderRadius = '4px';
+        strengthBar.style.overflow = 'hidden';
+        strengthBar.style.display = 'inline-block';
+        strengthBar.style.marginRight = '8px';
+        
+        const strengthFill = document.createElement('div');
+        strengthFill.style.width = `${Math.abs(momentum_score * 100)}%`;
+        strengthFill.style.height = '100%';
+        strengthFill.style.backgroundColor = signalType === 'BUY' ? '#28a745' : 
+                                           signalType === 'SELL' ? '#dc3545' : '#ffc107';
+        strengthBar.appendChild(strengthFill);
+        
+        signalCell.appendChild(strengthBar);
+        const signalText = document.createElement('span');
+        signalText.textContent = signalType;
+        signalText.className = `${signalType === 'BUY' ? 'positive' : signalType === 'SELL' ? 'negative' : 'neutral'} fw-bold`;
+        signalCell.appendChild(signalText);
         
         // Score
         const scoreCell = row.insertCell(2);

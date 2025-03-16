@@ -4,161 +4,157 @@ body {
 }
 
 .navbar {
-    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-    padding: 1rem;
+    background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    padding: 1rem;
 }
 
 .navbar-brand {
-    color: white !important;
     font-weight: 600;
     letter-spacing: 0.5px;
 }
 
 .card {
     border: none;
-    border-radius: 10px;
-    box-shadow: 0 0 20px rgba(0,0,0,.05);
-    margin-bottom: 20px;
-    transition: transform 0.2s ease-in-out;
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .card:hover {
     transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 .card-header {
     background-color: #fff;
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
     padding: 1rem;
 }
 
 .card-title {
     margin: 0;
-    color: #333;
     font-weight: 600;
+    color: #212529;
+    display: inline-block;
 }
 
 .card-body {
-    padding: 1.5rem;
+    padding: 1.25rem;
 }
 
-table {
-    width: 100%;
+.table {
     margin-bottom: 0;
 }
 
-th {
+.table th {
+    border-top: none;
     font-weight: 600;
-    color: #666;
-    border-bottom: 2px solid #f0f0f0;
+    color: #495057;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.5px;
 }
 
-.table > :not(caption) > * > * {
-    padding: 0.75rem;
+.table td {
+    vertical-align: middle;
+    font-size: 0.875rem;
+}
+
+.table tbody tr:hover {
+    background-color: rgba(0, 0, 0, 0.02);
 }
 
 .positive {
     color: #28a745;
-    font-weight: 500;
 }
 
 .negative {
     color: #dc3545;
-    font-weight: 500;
 }
 
-#portfolioValue, #dailyReturn, #sharpeRatio, #maxDrawdown {
-    font-weight: 600;
-    margin: 0;
-    color: #333;
-    font-size: 1.5rem;
-    animation: fadeIn 0.5s ease-in-out;
+.neutral {
+    color: #6c757d;
 }
 
-h6 {
-    color: #666;
-    font-size: 0.875rem;
-    margin-bottom: 0.5rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+.signal-strength-bar {
+    display: inline-block;
+    width: 60px;
+    height: 8px;
+    background-color: #e9ecef;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-right: 8px;
+    vertical-align: middle;
 }
 
-.table-hover tbody tr:hover {
-    background-color: #f8f9fa;
-    cursor: pointer;
+.signal-strength-bar .fill {
+    height: 100%;
+    transition: width 0.3s ease;
 }
 
-#last-update {
-    color: rgba(255,255,255,0.8);
-    font-size: 0.875rem;
+.loading-indicator {
+    width: 1rem;
+    height: 1rem;
 }
 
-canvas {
-    width: 100% !important;
-    height: 300px !important;
+#error-message {
+    margin-bottom: 1.5rem;
+    display: none;
 }
 
-/* Animations */
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.table tbody tr {
-    animation: fadeIn 0.3s ease-in-out;
-}
-
-/* Value changes animation */
-.flash {
-    animation: flash 0.5s ease-in-out;
-}
-
-@keyframes flash {
+@keyframes flash-update {
     0% {
-        background-color: rgba(40, 167, 69, 0.2);
+        background-color: rgba(13, 110, 253, 0.1);
     }
     100% {
         background-color: transparent;
     }
 }
 
-/* Portfolio stats cards */
-.stats-card {
-    padding: 1rem;
-    border-radius: 8px;
-    background: #fff;
-    margin-bottom: 1rem;
+.flash {
+    animation: flash-update 1s ease-out;
 }
 
-.stats-card h6 {
-    margin-bottom: 0.25rem;
+[title] {
+    position: relative;
+    cursor: help;
 }
 
-.stats-card h3 {
-    margin: 0;
-    font-size: 1.5rem;
-    font-weight: 600;
+[title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0.5rem;
+    background-color: rgba(0, 0, 0, 0.8);
+    color: white;
+    font-size: 0.75rem;
+    border-radius: 0.25rem;
+    white-space: nowrap;
+    z-index: 1000;
 }
 
-/* Responsive table */
 @media (max-width: 768px) {
+    .container {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }
+    
+    .card {
+        margin-bottom: 1rem;
+    }
+    
     .table-responsive {
-        margin: 0;
-        padding: 0;
+        margin-bottom: 0;
+    }
+    
+    .navbar {
+        padding: 0.5rem;
     }
     
     .card-body {
         padding: 1rem;
-    }
-    
-    #portfolioValue, #dailyReturn, #sharpeRatio, #maxDrawdown {
-        font-size: 1.25rem;
     }
 } 
