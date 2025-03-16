@@ -13,11 +13,8 @@ import random
 import numpy as np
 import traceback
 import json
-from redis.retry import Retry
-from redis.backoff import ExponentialBackoff
-from redis.exceptions import ConnectionError, TimeoutError
-from src.strategy import run_strategy, get_cached_signals
-from src.cache import redis_client
+from src.strategy import run_strategy, get_cached_signals, RELIABLE_TICKERS
+from src.cache import redis_client, clear_cache
 
 # Configure logging with more detailed format
 logging.basicConfig(
@@ -58,20 +55,13 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 # Register error handler
 app.register_error_handler(Exception, handle_error)
 
-# Configure Redis with better connection handling
-redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-redis_retry = Retry(ExponentialBackoff(), 3)
-
-redis_client = redis.from_url(
-    redis_url,
-    ssl_cert_reqs=None,
-    decode_responses=True,
-    socket_timeout=10,
-    socket_connect_timeout=10,
-    retry_on_timeout=True,
-    retry=redis_retry,
-    max_connections=20,
-    health_check_interval=30
+# Configure rate limiter
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    storage_uri=os.getenv('REDIS_URL', 'redis://localhost:6379'),
+    storage_options={"ssl_cert_reqs": None},
+    default_limits=["200 per day", "50 per hour"]
 )
 
 # Initialize portfolio state if not exists
@@ -95,14 +85,6 @@ def initialize_portfolio_state():
 
 # Initialize portfolio state on startup
 initialize_portfolio_state()
-
-limiter = Limiter(
-    app=app,
-    key_func=get_remote_address,
-    storage_uri=redis_url,
-    storage_options={"ssl_cert_reqs": None},
-    default_limits=["200 per day", "50 per hour"]
-)
 
 def format_api_response(data=None, status='success', message=None, code=200):
     """Standardize API response format"""
