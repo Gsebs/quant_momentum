@@ -4,11 +4,13 @@ body {
 }
 
 .navbar {
-    box-shadow: 0 2px 4px rgba(0,0,0,.1);
-    background: linear-gradient(135deg, #1a237e 0%, #0d47a1 100%) !important;
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    padding: 1rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .navbar-brand {
+    color: white !important;
     font-weight: 600;
     letter-spacing: 0.5px;
 }

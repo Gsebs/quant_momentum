@@ -95,44 +95,39 @@ def save_signals_to_cache(signals: List[Dict]) -> None:
     except Exception as e:
         logger.error(f"Error saving signals to cache: {e}")
 
-def process_batch(tickers: List[str]) -> List[Dict]:
-    """Process a batch of tickers and calculate their momentum scores.
-    
-    Args:
-        tickers: List of stock tickers to process
-        
-    Returns:
-        List of dictionaries containing momentum scores and other metrics for each ticker
-    """
-    results = []
+def process_batch(tickers: List[str]) -> Dict[str, Dict]:
+    """Process a batch of tickers and calculate their momentum scores."""
+    results = {}
     
     for ticker in tickers:
         try:
-            data = get_stock_data(ticker)
-            if data is None:
-                logging.warning(f"No data available for {ticker}")
+            # Get stock data
+            stock = yf.Ticker(ticker)
+            data = stock.history(period='1y')
+            
+            if data.empty:
+                logger.warning(f"No data available for {ticker}")
                 continue
-                
-            df = data['data']
-            current_price = data['current_price']
-            avg_volume = data['avg_volume']
-            price_change = data['price_change']
             
             # Calculate momentum score
-            momentum_score = calculate_momentum_score(df)
+            momentum_score = calculate_momentum_score(data)
             
-            results.append({
-                'ticker': ticker,
+            # Get current price and calculate price change
+            current_price = float(data['Close'].iloc[-1])
+            prev_price = float(data['Close'].iloc[-2])
+            price_change = (current_price - prev_price) / prev_price
+            
+            results[ticker] = {
                 'momentum_score': momentum_score,
                 'current_price': current_price,
-                'avg_volume': avg_volume,
-                'price_change': price_change
-            })
+                'price_change': price_change,
+                'signal': 'BUY' if momentum_score > 0.1 else 'SELL' if momentum_score < -0.1 else 'HOLD'
+            }
             
-            logging.info(f"Successfully processed {ticker}")
+            logger.info(f"Processed {ticker}: Score={momentum_score:.2f}, Signal={results[ticker]['signal']}")
             
         except Exception as e:
-            logging.error(f"Error processing {ticker}: {str(e)}")
+            logger.error(f"Error processing {ticker}: {str(e)}")
             continue
             
     return results
@@ -176,20 +171,38 @@ def update_signals(tickers: List[str]):
     except Exception as e:
         logging.error(f"Error updating signals: {str(e)}")
 
-def run_strategy(tickers: List[str]) -> List[Dict]:
+def run_strategy(tickers: List[str]) -> Dict[str, Dict]:
     """Run the momentum strategy on the given tickers."""
     try:
-        # Start background update
-        thread = threading.Thread(target=update_signals, args=(tickers,))
-        thread.daemon = True
-        thread.start()
+        # Try to get cached signals first
+        cached_signals = get_cached_signals()
+        if cached_signals:
+            return cached_signals
         
-        # Return initial signals
-        return get_cached_signals() or []
+        # Process tickers in batches
+        all_signals = {}
+        batch_size = 5
+        
+        for i in range(0, len(tickers), batch_size):
+            batch = tickers[i:i + batch_size]
+            batch_signals = process_batch(batch)
+            all_signals.update(batch_signals)
+            
+            if i + batch_size < len(tickers):
+                logger.info("Waiting 2 seconds before next batch...")
+                time.sleep(2)
+        
+        # Cache the signals
+        try:
+            redis_client.set('momentum_signals', pickle.dumps(all_signals), ex=300)  # Cache for 5 minutes
+        except Exception as e:
+            logger.error(f"Failed to cache signals: {str(e)}")
+        
+        return all_signals
         
     except Exception as e:
-        logging.error(f"Error running strategy: {str(e)}")
-        return []
+        logger.error(f"Error running strategy: {str(e)}")
+        return {}
 
 def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """Get data from cache if available and not expired."""

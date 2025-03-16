@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import redis
 import threading
 import random
+import numpy as np
 
 # Configure logging
 logging.basicConfig(
@@ -126,25 +127,9 @@ def get_performance():
         report_file = 'data/reports/momentum_report.xlsx'
         signals_file = 'data/momentum_signals.xlsx'
         
-        # Initialize data if files don't exist
-        if not os.path.exists(report_file) or not os.path.exists(signals_file):
-            initialize_data()
-            return jsonify({
-                'status': 'initializing',
-                'message': 'Data is being generated',
-                'portfolio_stats': {
-                    'portfolio_value': 1000000.00,  # Initial portfolio value
-                    'daily_return': 0.00,
-                    'sharpe_ratio': 0.00,
-                    'max_drawdown': 0.00
-                },
-                'recent_trades': [],
-                'performance_data': {
-                    'dates': [],
-                    'values': []
-                }
-            })
-
+        # Initialize portfolio with $1,000,000
+        INITIAL_PORTFOLIO = 1000000.0
+        
         # Get momentum signals
         signals = run_strategy(RELIABLE_TICKERS)
         
@@ -152,44 +137,69 @@ def get_performance():
             signals = {}
             
         # Calculate portfolio statistics
-        total_value = sum(float(signal.get('current_price', 0)) * 100 for signal in signals.values())
-        daily_returns = [float(signal.get('1d_return', 0)) for signal in signals.values()]
-        avg_daily_return = sum(daily_returns) / len(daily_returns) if daily_returns else 0
+        total_value = INITIAL_PORTFOLIO
+        daily_returns = []
+        win_count = 0
+        total_trades = 0
         
-        # Calculate Sharpe ratio (assuming risk-free rate of 2%)
-        risk_free_rate = 0.02
-        returns_std = pd.Series(daily_returns).std() if daily_returns else 0
-        sharpe_ratio = ((avg_daily_return - risk_free_rate) / returns_std) if returns_std != 0 else 0
+        for signal in signals.values():
+            momentum_score = float(signal.get('momentum_score', 0))
+            price_change = float(signal.get('price_change', 0))
+            
+            # Simulate position size based on momentum score
+            position_size = abs(momentum_score) * INITIAL_PORTFOLIO * 0.1  # 10% max per position
+            
+            # Calculate trade P&L
+            trade_pl = position_size * price_change
+            total_value += trade_pl
+            
+            if trade_pl > 0:
+                win_count += 1
+            total_trades += 1
+            
+            daily_returns.append(price_change)
         
-        # Calculate max drawdown from signals
-        max_drawdown = max([abs(float(signal.get('drawdown', 0))) for signal in signals.values()], default=0)
+        # Calculate risk metrics
+        daily_returns = np.array(daily_returns)
+        avg_daily_return = np.mean(daily_returns) if len(daily_returns) > 0 else 0
+        volatility = np.std(daily_returns) * np.sqrt(252) if len(daily_returns) > 0 else 0
+        sharpe_ratio = (avg_daily_return * 252) / volatility if volatility != 0 else 0
+        max_drawdown = abs(min(daily_returns)) if len(daily_returns) > 0 else 0
+        win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0
         
-        # Generate recent trades from signals
+        # Generate recent trades based on momentum signals
         recent_trades = []
         for ticker, signal in signals.items():
-            if abs(float(signal.get('momentum_score', 0))) > 0.5:  # Threshold for trade signals
-                trade_type = 'BUY' if float(signal.get('momentum_score', 0)) > 0 else 'SELL'
+            momentum_score = float(signal.get('momentum_score', 0))
+            current_price = float(signal.get('current_price', 0))
+            
+            if abs(momentum_score) > 0.1:  # Only generate trades for significant signals
+                trade_type = 'BUY' if momentum_score > 0 else 'SELL'
+                position_size = int((abs(momentum_score) * INITIAL_PORTFOLIO * 0.1) / current_price)
+                
                 recent_trades.append({
                     'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     'ticker': ticker,
                     'type': trade_type,
-                    'price': float(signal.get('current_price', 0)),
-                    'quantity': int(100000 / float(signal.get('current_price', 1)))  # Assuming $100k per trade
+                    'price': current_price,
+                    'quantity': position_size
                 })
         
         # Sort trades by time (most recent first) and limit to last 10
         recent_trades = sorted(recent_trades, key=lambda x: x['time'], reverse=True)[:10]
         
-        # Generate performance data (simulated historical values)
+        # Generate performance data (last 30 days)
         dates = [(datetime.now() - timedelta(days=x)).strftime('%Y-%m-%d') for x in range(30, 0, -1)]
-        base_value = total_value if total_value > 0 else 1000000
         
         # Generate realistic performance values with momentum trend
         values = []
-        current_value = base_value
+        current_value = INITIAL_PORTFOLIO
+        cumulative_return = 1.0
+        
         for i in range(30):
-            daily_change = avg_daily_return + (random.uniform(-0.02, 0.02) if avg_daily_return != 0 else random.uniform(-0.005, 0.015))
-            current_value *= (1 + daily_change)
+            daily_change = avg_daily_return + (np.random.normal(0, volatility/np.sqrt(252)))
+            cumulative_return *= (1 + daily_change)
+            current_value = INITIAL_PORTFOLIO * cumulative_return
             values.append(round(current_value, 2))
 
         return jsonify({
@@ -199,6 +209,16 @@ def get_performance():
                 'daily_return': round(avg_daily_return * 100, 2),
                 'sharpe_ratio': round(sharpe_ratio, 2),
                 'max_drawdown': round(max_drawdown * 100, 2)
+            },
+            'strategy_performance': {
+                'win_rate': round(win_rate, 2),
+                'profit_factor': round((win_count / total_trades) if total_trades > 0 else 0, 2),
+                'total_trades': total_trades,
+                'volatility': round(volatility * 100, 2)
+            },
+            'model_metrics': {
+                'prediction_accuracy': round(win_rate, 2),
+                'signal_strength': round(np.mean([abs(s.get('momentum_score', 0)) for s in signals.values()]), 2)
             },
             'recent_trades': recent_trades,
             'performance_data': {

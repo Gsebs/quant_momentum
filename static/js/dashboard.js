@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(updateDashboard, 30000);
 });
 
-// Initialize the performance chart
+// Initialize the performance chart with improved styling
 function initializeChart() {
     const ctx = document.getElementById('performanceChart').getContext('2d');
     performanceChart = new Chart(ctx, {
@@ -23,7 +23,8 @@ function initializeChart() {
                 borderColor: '#0d6efd',
                 backgroundColor: 'rgba(13, 110, 253, 0.1)',
                 fill: true,
-                tension: 0.4
+                tension: 0.4,
+                borderWidth: 2
             }]
         },
         options: {
@@ -38,8 +39,18 @@ function initializeChart() {
                     intersect: false,
                     callbacks: {
                         label: function(context) {
-                            return `$${context.parsed.y.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                            return `Portfolio Value: $${context.parsed.y.toLocaleString('en-US', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                            })}`;
                         }
+                    },
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    titleFont: {
+                        size: 14
+                    },
+                    bodyFont: {
+                        size: 13
                     }
                 }
             },
@@ -51,13 +62,24 @@ function initializeChart() {
                     },
                     ticks: {
                         callback: function(value) {
-                            return '$' + value.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+                            return '$' + value.toLocaleString('en-US', {
+                                minimumFractionDigits: 0,
+                                maximumFractionDigits: 0
+                            });
+                        },
+                        font: {
+                            size: 12
                         }
                     }
                 },
                 x: {
                     grid: {
                         display: false
+                    },
+                    ticks: {
+                        font: {
+                            size: 12
+                        }
                     }
                 }
             },
@@ -79,39 +101,34 @@ async function updateDashboard() {
         // Update momentum signals
         const signalsResponse = await fetch('/api/momentum-signals');
         const signalsData = await signalsResponse.json();
-        if (signalsData.data) {
-            updateSignalsTable(signalsData.data);
-        }
         
         // Update performance data
         const performanceResponse = await fetch('/api/performance');
         const performanceData = await performanceResponse.json();
         
-        if (performanceData.status === 'success') {
-            // Update portfolio statistics with animation
+        if (performanceData.status === 'success' && signalsData.status === 'success') {
+            // Update all metrics
             updatePortfolioStats(performanceData.portfolio_stats);
-            
-            // Update performance chart
+            updateStrategyPerformance(performanceData.strategy_performance);
+            updateModelMetrics(performanceData.model_metrics);
+            updateSignalsTable(signalsData.data);
             updatePerformanceChart(performanceData.performance_data);
-            
-            // Update recent trades
             updateRecentTrades(performanceData.recent_trades);
             
             // Flash updated values
             flashUpdatedValues();
-        }
-        
-        // Update last update time
-        lastUpdateTime = new Date();
-        document.getElementById('last-update').textContent = 
-            `Last updated: ${lastUpdateTime.toLocaleTimeString()}`;
             
+            // Update last update time
+            lastUpdateTime = new Date();
+            document.getElementById('last-update').textContent = 
+                `Last updated: ${lastUpdateTime.toLocaleTimeString()}`;
+        }
     } catch (error) {
         console.error('Error updating dashboard:', error);
     }
 }
 
-// Update the signals table
+// Update the signals table with improved formatting
 function updateSignalsTable(signals) {
     const tbody = document.getElementById('signalsTable').getElementsByTagName('tbody')[0];
     tbody.innerHTML = '';
@@ -120,68 +137,118 @@ function updateSignalsTable(signals) {
         const row = tbody.insertRow();
         row.className = 'signal-row';
         
-        // Add cells
-        row.insertCell(0).textContent = ticker;
+        // Ticker
+        const tickerCell = row.insertCell(0);
+        tickerCell.textContent = ticker;
+        tickerCell.className = 'fw-bold';
         
+        // Signal
         const signalCell = row.insertCell(1);
-        signalCell.textContent = signal.signal || (signal.momentum_score > 0 ? 'BUY' : 'SELL');
-        signalCell.className = signal.momentum_score > 0 ? 'positive' : 'negative';
+        const momentum_score = parseFloat(signal.momentum_score);
+        const signalType = momentum_score > 0.1 ? 'BUY' : momentum_score < -0.1 ? 'SELL' : 'HOLD';
+        signalCell.textContent = signalType;
+        signalCell.className = `${signalType === 'BUY' ? 'positive' : signalType === 'SELL' ? 'negative' : 'neutral'} fw-bold`;
         
-        row.insertCell(2).textContent = signal.momentum_score.toFixed(2);
+        // Score
+        const scoreCell = row.insertCell(2);
+        scoreCell.textContent = momentum_score.toFixed(2);
+        scoreCell.className = `${momentum_score > 0 ? 'positive' : momentum_score < 0 ? 'negative' : 'neutral'} fw-bold`;
         
+        // Price
         const priceCell = row.insertCell(3);
-        priceCell.textContent = `$${signal.current_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+        priceCell.textContent = `$${parseFloat(signal.current_price).toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        })}`;
         
+        // Change
         const changeCell = row.insertCell(4);
-        const change = signal.price_change * 100;
-        changeCell.textContent = `${change.toFixed(2)}%`;
-        changeCell.className = change >= 0 ? 'positive' : 'negative';
+        const change = parseFloat(signal.price_change) * 100;
+        changeCell.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+        changeCell.className = `${change >= 0 ? 'positive' : 'negative'} fw-bold`;
     });
 }
 
-// Update portfolio statistics with animation
+// Update portfolio statistics with improved animations
 function updatePortfolioStats(stats) {
     if (!stats) return;
     
-    animateValue('portfolioValue', stats.portfolio_value, '$');
-    animateValue('dailyReturn', stats.daily_return, '%');
-    animateValue('sharpeRatio', stats.sharpe_ratio);
-    animateValue('maxDrawdown', stats.max_drawdown, '%');
+    // Portfolio value with currency formatting
+    animateValue('portfolioValue', stats.portfolio_value, '$', '', true);
+    
+    // Daily return with color coding
+    const dailyReturnElement = document.getElementById('dailyReturn');
+    const dailyReturn = stats.daily_return;
+    dailyReturnElement.textContent = `${dailyReturn >= 0 ? '+' : ''}${dailyReturn.toFixed(2)}%`;
+    dailyReturnElement.className = `badge ${dailyReturn >= 0 ? 'bg-success' : 'bg-danger'}`;
+    
+    // Risk metrics
+    animateValue('sharpeRatio', stats.sharpe_ratio, '', '', false);
+    animateValue('maxDrawdown', stats.max_drawdown, '', '%', false);
 }
 
-// Animate value changes
-function animateValue(elementId, newValue, prefix = '', suffix = '') {
+// Update strategy performance metrics
+function updateStrategyPerformance(performance) {
+    if (!performance) return;
+    
+    animateValue('winRate', performance.win_rate, '', '%', false);
+    animateValue('profitFactor', performance.profit_factor, '', '', false);
+}
+
+// Update model metrics
+function updateModelMetrics(metrics) {
+    if (!metrics) return;
+    
+    animateValue('modelAccuracy', metrics.prediction_accuracy, '', '%', false);
+    animateValue('signalStrength', metrics.signal_strength, '', '', false);
+}
+
+// Animate value changes with improved smoothness
+function animateValue(elementId, newValue, prefix = '', suffix = '', isCurrency = false) {
     const element = document.getElementById(elementId);
+    if (!element) return;
+    
     const oldValue = parseFloat(element.textContent.replace(/[^0-9.-]+/g, ''));
-    const duration = 1000; // Animation duration in ms
-    const steps = 60; // Number of steps in animation
+    const duration = 1000;
+    const steps = 60;
     const increment = (newValue - oldValue) / steps;
     
     let currentStep = 0;
     const interval = setInterval(() => {
         currentStep++;
         const currentValue = oldValue + (increment * currentStep);
-        element.textContent = `${prefix}${currentValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}${suffix}`;
+        
+        element.textContent = `${prefix}${isCurrency ? 
+            currentValue.toLocaleString('en-US', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }) :
+            currentValue.toFixed(2)}${suffix}`;
         
         if (currentStep >= steps) {
             clearInterval(interval);
-            element.textContent = `${prefix}${newValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}${suffix}`;
+            element.textContent = `${prefix}${isCurrency ? 
+                newValue.toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2
+                }) :
+                newValue.toFixed(2)}${suffix}`;
         }
     }, duration / steps);
 }
 
-// Update performance chart
+// Update performance chart with improved animations
 function updatePerformanceChart(data) {
     if (!data || !data.dates || !data.values) return;
     
     performanceChart.data.labels = data.dates;
     performanceChart.data.datasets[0].data = data.values;
     
-    // Update chart with animation
+    // Update chart with smooth animation
     performanceChart.update('active');
 }
 
-// Update recent trades table
+// Update recent trades table with improved formatting
 function updateRecentTrades(trades) {
     if (!trades || !trades.length) return;
     
@@ -192,26 +259,35 @@ function updateRecentTrades(trades) {
         const row = tbody.insertRow();
         row.className = 'trade-row';
         
-        // Format time
+        // Time
+        const timeCell = row.insertCell(0);
         const time = new Date(trade.time);
-        row.insertCell(0).textContent = time.toLocaleString();
+        timeCell.textContent = time.toLocaleString();
         
-        // Add other cells
-        row.insertCell(1).textContent = trade.ticker;
+        // Ticker
+        const tickerCell = row.insertCell(1);
+        tickerCell.textContent = trade.ticker;
+        tickerCell.className = 'fw-bold';
         
+        // Type
         const typeCell = row.insertCell(2);
         typeCell.textContent = trade.type;
-        typeCell.className = trade.type === 'BUY' ? 'positive' : 'negative';
+        typeCell.className = `${trade.type === 'BUY' ? 'positive' : 'negative'} fw-bold`;
         
+        // Price
         const priceCell = row.insertCell(3);
-        priceCell.textContent = `$${trade.price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+        priceCell.textContent = `$${trade.price.toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        })}`;
         
+        // Quantity
         const quantityCell = row.insertCell(4);
         quantityCell.textContent = trade.quantity.toLocaleString('en-US');
     });
 }
 
-// Flash updated values
+// Flash updated values with improved animation
 function flashUpdatedValues() {
     const elements = document.querySelectorAll('.signal-row, .trade-row');
     elements.forEach(element => {
