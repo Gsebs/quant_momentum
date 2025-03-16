@@ -444,15 +444,15 @@ def redis_cache(expire_time=300):
         return wrapper
     return decorator
 
-def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]:
+def get_stock_data(ticker: str) -> Optional[Dict]:
     """
-    Get stock data for a given ticker using yfinance with Redis caching.
+    Get stock data for a given ticker using Redis caching and exponential backoff retries.
     
     Args:
         ticker (str): The stock ticker symbol
         
     Returns:
-        Optional[Dict]: Dictionary containing stock data and metrics, or None if data retrieval fails
+        Optional[Dict]: Dictionary containing stock data and metrics, or None if data cannot be retrieved
     """
     cache_key = f"stock_data:{ticker}"
     
@@ -460,90 +460,88 @@ def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]
         # Try to get cached data first
         cached_data = redis_client.get(cache_key)
         if cached_data:
-            data = pickle.loads(cached_data)
-            logging.info(f"Retrieved cached data for {ticker}")
-            return data
-    except Exception as e:
-        logging.error(f"Error accessing Redis cache for {ticker}: {str(e)}")
-    
-    max_retries = 3
-    base_delay = 5
-    
-    for attempt in range(max_retries):
-        try:
-            if attempt > 0:
-                delay = base_delay * (2 ** (attempt - 1))
-                logging.info(f"Retrying {ticker} after {delay} seconds (attempt {attempt + 1}/{max_retries})")
-                time.sleep(delay)
+            return pickle.loads(cached_data)
             
-            stock = yf.Ticker(ticker)
-            
-            # Get basic info first
+        # Create Ticker object
+        stock = yf.Ticker(ticker)
+        
+        # Implement exponential backoff with jitter for info retrieval
+        max_retries = 5
+        base_delay = 1
+        max_delay = 32
+        
+        for attempt in range(max_retries):
             try:
+                # Get basic info to verify the symbol exists
                 info = stock.info
-                if not info:
-                    logging.warning(f"No info available for {ticker}")
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    logging.error(f"Failed to get info for {ticker} after {max_retries} attempts: {str(e)}")
                     return None
-            except Exception as e:
-                if "429" in str(e):
-                    raise
-                logging.error(f"Error getting info for {ticker}: {str(e)}")
-                return None
-            
-            # Get historical data
-            data = stock.history(
-                period="1y",
-                interval="1d",
-                auto_adjust=True,
-                actions=False
-            )
-            
-            if data.empty:
-                logging.warning(f"No historical data available for {ticker}")
-                return None
-            
-            required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-            missing_columns = [col for col in required_columns if col not in data.columns]
-            if missing_columns:
-                logging.error(f"Missing required columns for {ticker}: {missing_columns}")
-                return None
-            
-            # Calculate metrics
-            current_price = data['Close'].iloc[-1]
-            avg_volume = data['Volume'].mean()
-            price_change = ((current_price - data['Close'].iloc[0]) / data['Close'].iloc[0]) * 100
-            
-            result = {
-                'data': data,
-                'current_price': current_price,
-                'avg_volume': avg_volume,
-                'price_change': price_change
-            }
-            
-            # Cache the result in Redis for 1 hour
+                    
+                # Calculate delay with exponential backoff and jitter
+                delay = min(max_delay, base_delay * (2 ** attempt))
+                jitter = random.uniform(0, 0.1 * delay)  # 10% jitter
+                total_delay = delay + jitter
+                
+                logging.info(f"Retrying {ticker} info after {total_delay:.2f} seconds (attempt {attempt + 1}/{max_retries})")
+                time.sleep(total_delay)
+        
+        # Implement exponential backoff with jitter for historical data
+        for attempt in range(max_retries):
             try:
-                redis_client.setex(
-                    cache_key,
-                    timedelta(hours=1),
-                    pickle.dumps(result)
-                )
-                logging.info(f"Cached data for {ticker}")
+                # Get historical data
+                df = stock.history(period="1y", interval="1d")
+                if df.empty:
+                    logging.warning(f"No historical data available for {ticker}")
+                    return None
+                break
             except Exception as e:
-                logging.error(f"Error caching data for {ticker}: {str(e)}")
+                if attempt == max_retries - 1:
+                    logging.error(f"Failed to get historical data for {ticker} after {max_retries} attempts: {str(e)}")
+                    return None
+                    
+                delay = min(max_delay, base_delay * (2 ** attempt))
+                jitter = random.uniform(0, 0.1 * delay)
+                total_delay = delay + jitter
+                
+                logging.info(f"Retrying {ticker} historical data after {total_delay:.2f} seconds (attempt {attempt + 1}/{max_retries})")
+                time.sleep(total_delay)
+        
+        # Verify required columns exist
+        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in df.columns for col in required_columns):
+            logging.error(f"Missing required columns for {ticker}")
+            return None
             
-            logging.info(f"Successfully fetched data for {ticker}")
-            return result
-            
+        # Calculate metrics
+        current_price = df['Close'].iloc[-1]
+        avg_volume = df['Volume'].mean()
+        price_change = (current_price - df['Close'].iloc[0]) / df['Close'].iloc[0]
+        
+        result = {
+            'data': df,
+            'current_price': current_price,
+            'avg_volume': avg_volume,
+            'price_change': price_change
+        }
+        
+        # Cache the result for 1 hour
+        try:
+            redis_client.setex(
+                cache_key,
+                3600,  # 1 hour in seconds
+                pickle.dumps(result)
+            )
         except Exception as e:
-            if attempt == max_retries - 1:
-                logging.error(f"Failed to get data for {ticker} after {max_retries} attempts: {str(e)}")
-                return None
-            if "429" not in str(e):
-                logging.error(f"Error getting data for {ticker}: {str(e)}")
-                return None
-            continue
-    
-    return None
+            logging.error(f"Failed to cache data for {ticker}: {str(e)}")
+        
+        return result
+        
+    except Exception as e:
+        logging.error(f"Error getting data for {ticker}: {str(e)}")
+        return None
 
 def get_batch_data(tickers: List[str]) -> List[Dict]:
     """
