@@ -13,9 +13,6 @@ import random
 import numpy as np
 import traceback
 import json
-from redis.retry import Retry
-from redis.backoff import ExponentialBackoff
-from redis.exceptions import ConnectionError, TimeoutError
 
 # Configure logging
 logging.basicConfig(
@@ -39,55 +36,27 @@ except ImportError as e:
 
 app = Flask(__name__, 
     static_folder='static',
+    static_url_path='/static',
     template_folder='templates'
 )
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# Configure Redis with better error handling and retries
-def get_redis_client():
-    """Get Redis client with proper configuration and error handling"""
-    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-    
-    try:
-        client = redis.from_url(
-            redis_url,
-            ssl_cert_reqs=None,
-            decode_responses=True,
-            socket_timeout=5,
-            socket_connect_timeout=5,
-            retry_on_timeout=True,
-            max_connections=20
-        )
-        client.ping()  # Test connection
-        logger.info("Successfully connected to Redis")
-        return client
-    except Exception as e:
-        logger.error(f"Redis connection error: {str(e)}")
-        # Initialize in-memory fallback
-        return FallbackCache()
-
-class FallbackCache:
-    """In-memory fallback cache when Redis is unavailable"""
-    def __init__(self):
-        self._data = {}
-        logger.info("Using in-memory fallback cache")
-    
-    def get(self, key):
-        return self._data.get(key)
-    
-    def set(self, key, value, ex=None):
-        self._data[key] = value
-    
-    def delete(self, key):
-        self._data.pop(key, None)
-    
-    def ping(self):
-        return True
+# Configure Redis
+redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+redis_client = redis.from_url(
+    redis_url,
+    ssl_cert_reqs=None,
+    decode_responses=True,
+    socket_timeout=5,
+    socket_connect_timeout=5,
+    retry_on_timeout=True,
+    max_connections=20
+)
 
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    storage_uri=os.getenv('REDIS_URL', 'redis://localhost:6379'),
+    storage_uri=redis_url,
     storage_options={"ssl_cert_reqs": None},
     default_limits=["200 per day", "50 per hour"]
 )
@@ -107,7 +76,7 @@ def format_api_response(data=None, status='success', message=None, code=200):
 def ensure_directories():
     """Ensure required directories exist"""
     try:
-        dirs = ['data', 'data/reports', 'data/charts']
+        dirs = ['data', 'data/reports', 'data/charts', 'data/cache']
         for dir_path in dirs:
             os.makedirs(dir_path, exist_ok=True)
             logger.info(f"Ensured directory exists: {dir_path}")
@@ -196,6 +165,13 @@ def get_momentum_signals():
             )
         
         # Sort signals by momentum score
+        if isinstance(signals, dict):
+            signals_list = []
+            for ticker, data in signals.items():
+                data['ticker'] = ticker
+                signals_list.append(data)
+            signals = signals_list
+            
         signals = sorted(signals, key=lambda x: abs(float(x.get('momentum_score', 0))), reverse=True)
         return format_api_response(data=signals)
         
