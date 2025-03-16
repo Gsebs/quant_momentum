@@ -1,43 +1,11 @@
-// Initialize performance chart
+// Dashboard initialization and real-time updates
 let performanceChart;
 let lastUpdateTime = new Date();
-let isLoading = false;
+const updateInterval = 5000; // Update every 5 seconds
 
 // Initialize the dashboard
-document.addEventListener('DOMContentLoaded', function() {
-    initializeChart();
-    updateDashboard();
-    // Update every 30 seconds
-    setInterval(updateDashboard, 30000);
-    
-    // Add tooltips to metrics
-    addTooltips();
-});
-
-// Add tooltips to explain metrics
-function addTooltips() {
-    const tooltips = {
-        'portfolioValue': 'Current total value of all positions',
-        'dailyReturn': 'Percentage return for the current trading day',
-        'sharpeRatio': 'Risk-adjusted return metric (higher is better)',
-        'maxDrawdown': 'Largest peak-to-trough decline',
-        'winRate': 'Percentage of profitable trades',
-        'profitFactor': 'Ratio of winning trades to losing trades',
-        'modelAccuracy': 'Percentage of correct predictions',
-        'signalStrength': 'Average strength of current momentum signals'
-    };
-    
-    Object.entries(tooltips).forEach(([id, text]) => {
-        const element = document.getElementById(id);
-        if (element) {
-            element.setAttribute('title', text);
-            element.style.cursor = 'help';
-        }
-    });
-}
-
-// Initialize the performance chart with improved styling
-function initializeChart() {
+async function initializeDashboard() {
+    // Initialize performance chart
     const ctx = document.getElementById('performanceChart').getContext('2d');
     performanceChart = new Chart(ctx, {
         type: 'line',
@@ -46,354 +14,219 @@ function initializeChart() {
             datasets: [{
                 label: 'Portfolio Value',
                 data: [],
-                borderColor: '#0d6efd',
-                backgroundColor: 'rgba(13, 110, 253, 0.1)',
-                fill: true,
-                tension: 0.4,
-                borderWidth: 2
+                borderColor: 'rgb(75, 192, 192)',
+                tension: 0.1,
+                fill: false
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                },
-                tooltip: {
-                    mode: 'index',
-                    intersect: false,
-                    callbacks: {
-                        label: function(context) {
-                            return `Portfolio Value: $${context.parsed.y.toLocaleString('en-US', {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2
-                            })}`;
-                        }
-                    },
-                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                    titleFont: {
-                        size: 14
-                    },
-                    bodyFont: {
-                        size: 13
-                    }
-                }
+            animation: {
+                duration: 750,
+                easing: 'easeInOutQuart'
             },
             scales: {
                 y: {
                     beginAtZero: false,
                     grid: {
-                        color: 'rgba(0, 0, 0, 0.05)'
-                    },
-                    ticks: {
-                        callback: function(value) {
-                            return '$' + value.toLocaleString('en-US', {
-                                minimumFractionDigits: 0,
-                                maximumFractionDigits: 0
-                            });
-                        },
-                        font: {
-                            size: 12
-                        }
+                        color: 'rgba(255, 255, 255, 0.1)'
                     }
                 },
                 x: {
                     grid: {
-                        display: false
-                    },
-                    ticks: {
-                        font: {
-                            size: 12
-                        }
+                        color: 'rgba(255, 255, 255, 0.1)'
                     }
                 }
             },
-            interaction: {
-                intersect: false,
-                mode: 'index'
-            },
-            animation: {
-                duration: 750,
-                easing: 'easeInOutQuart'
+            plugins: {
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            return `$${context.parsed.y.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                        }
+                    }
+                },
+                legend: {
+                    labels: {
+                        font: {
+                            size: 14
+                        }
+                    }
+                }
             }
         }
     });
+
+    // Start real-time updates
+    updateDashboard();
+    setInterval(updateDashboard, updateInterval);
 }
 
-// Update the dashboard with latest data
+// Update dashboard with latest data
 async function updateDashboard() {
-    if (isLoading) return;
-    
     try {
-        isLoading = true;
-        showLoadingState(true);
-        
-        // Update momentum signals
-        const signalsResponse = await fetch('/api/momentum-signals');
+        // Fetch momentum signals and performance data
+        const [signalsResponse, performanceResponse] = await Promise.all([
+            fetch('/api/momentum-signals'),
+            fetch('/api/performance')
+        ]);
+
         const signalsData = await signalsResponse.json();
-        
-        // Update performance data
-        const performanceResponse = await fetch('/api/performance');
         const performanceData = await performanceResponse.json();
-        
-        if (performanceData.status === 'success' && performanceData.data) {
-            const data = performanceData.data;
-            
-            // Update portfolio value and positions
-            updatePortfolioStats({
-                portfolioValue: data.portfolio_value,
-                cash: data.cash,
-                dailyReturn: data.daily_return * 100,
-                sharpeRatio: data.sharpe_ratio,
-                maxDrawdown: data.max_drawdown * 100
-            });
-            
-            // Update strategy performance
-            updateStrategyPerformance({
-                winRate: data.win_rate,
-                totalTrades: data.total_trades,
-                winningTrades: data.winning_trades
-            });
-            
-            // Update signals table if we have signals
-            if (signalsData.status === 'success' && signalsData.data) {
-                updateSignalsTable(signalsData.data);
-            }
-            
-            // Update performance chart with daily returns
-            updatePerformanceChart({
-                values: data.daily_returns.map(ret => (1 + ret) * 1000000),
-                dates: data.daily_returns.map((_, i) => {
-                    const date = new Date();
-                    date.setDate(date.getDate() - (data.daily_returns.length - i - 1));
-                    return date.toISOString().split('T')[0];
-                })
-            });
-            
-            // Update recent trades
-            updateRecentTrades(data.recent_trades);
-            
-            // Flash updated values
-            flashUpdatedValues();
-            
-            // Update last update time
-            lastUpdateTime = new Date();
-            document.getElementById('last-update').textContent = 
-                `Last updated: ${lastUpdateTime.toLocaleTimeString()}`;
-                
-            showError(null);
-        } else {
-            showError(performanceData.message || 'Failed to update dashboard data');
+
+        if (signalsData.status === 'success' && performanceData.status === 'success') {
+            updateSignalsTable(signalsData.data);
+            updatePerformanceMetrics(performanceData.data);
+            updatePortfolioChart(performanceData.data);
+            updateTradesTable(performanceData.data.recent_trades);
+            updateLastUpdateTime();
         }
     } catch (error) {
         console.error('Error updating dashboard:', error);
-        showError('Failed to connect to server');
-    } finally {
-        isLoading = false;
-        showLoadingState(false);
+        showErrorMessage('Failed to update dashboard. Retrying...');
     }
 }
 
-// Show/hide loading state
-function showLoadingState(show) {
-    const elements = document.querySelectorAll('.loading-indicator');
-    elements.forEach(el => {
-        el.style.display = show ? 'block' : 'none';
-    });
-    
-    const tables = document.querySelectorAll('table');
-    tables.forEach(table => {
-        table.style.opacity = show ? '0.6' : '1';
-    });
-}
-
-// Show/hide error message
-function showError(message) {
-    const errorDiv = document.getElementById('error-message');
-    if (errorDiv) {
-        if (message) {
-            errorDiv.textContent = message;
-            errorDiv.style.display = 'block';
-        } else {
-            errorDiv.style.display = 'none';
-        }
-    }
-}
-
-// Update the signals table with improved formatting and signal strength visualization
+// Update signals table with latest momentum data
 function updateSignalsTable(signals) {
-    const tbody = document.getElementById('signalsTable').getElementsByTagName('tbody')[0];
+    const table = document.getElementById('signalsTable');
+    const tbody = table.querySelector('tbody');
     tbody.innerHTML = '';
-    
-    if (!Array.isArray(signals)) {
-        signals = Object.entries(signals).map(([ticker, signal]) => ({
-            ticker,
-            ...signal
-        }));
-    }
-    
-    signals.forEach((signal) => {
-        const row = tbody.insertRow();
-        row.className = 'signal-row';
+
+    signals.forEach(signal => {
+        const row = document.createElement('tr');
+        const momentumClass = signal.momentum_score > 0.1 ? 'positive' : 
+                            signal.momentum_score < -0.1 ? 'negative' : 'neutral';
         
-        // Ticker
-        const tickerCell = row.insertCell(0);
-        tickerCell.textContent = signal.ticker;
-        tickerCell.className = 'fw-bold';
-        
-        // Signal with strength visualization
-        const signalCell = row.insertCell(1);
-        const momentum_score = parseFloat(signal.momentum_score);
-        const signalType = momentum_score > 0.1 ? 'BUY' : momentum_score < -0.1 ? 'SELL' : 'HOLD';
-        
-        // Create signal strength bar
-        const strengthBar = document.createElement('div');
-        strengthBar.className = 'signal-strength-bar';
-        strengthBar.style.width = '60px';
-        strengthBar.style.height = '8px';
-        strengthBar.style.backgroundColor = '#e9ecef';
-        strengthBar.style.borderRadius = '4px';
-        strengthBar.style.overflow = 'hidden';
-        strengthBar.style.display = 'inline-block';
-        strengthBar.style.marginRight = '8px';
-        
-        const strengthFill = document.createElement('div');
-        strengthFill.style.width = `${Math.abs(momentum_score * 100)}%`;
-        strengthFill.style.height = '100%';
-        strengthFill.style.backgroundColor = signalType === 'BUY' ? '#28a745' : 
-                                           signalType === 'SELL' ? '#dc3545' : '#ffc107';
-        strengthBar.appendChild(strengthFill);
-        
-        signalCell.appendChild(strengthBar);
-        const signalText = document.createElement('span');
-        signalText.textContent = signalType;
-        signalText.className = `${signalType === 'BUY' ? 'positive' : signalType === 'SELL' ? 'negative' : 'neutral'} fw-bold`;
-        signalCell.appendChild(signalText);
-        
-        // Score
-        const scoreCell = row.insertCell(2);
-        scoreCell.textContent = momentum_score.toFixed(2);
-        scoreCell.className = `${momentum_score > 0 ? 'positive' : momentum_score < 0 ? 'negative' : 'neutral'} fw-bold`;
-        
-        // Price
-        const priceCell = row.insertCell(3);
-        priceCell.textContent = `$${parseFloat(signal.current_price).toLocaleString('en-US', {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2
-        })}`;
-        
-        // Change
-        const changeCell = row.insertCell(4);
-        const change = parseFloat(signal.price_change) * 100;
-        changeCell.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
-        changeCell.className = `${change >= 0 ? 'positive' : 'negative'} fw-bold`;
+        row.innerHTML = `
+            <td class="font-weight-bold">${signal.ticker}</td>
+            <td class="${momentumClass}">${signal.momentum_score.toFixed(3)}</td>
+            <td>$${parseFloat(signal.current_price).toFixed(2)}</td>
+            <td class="signal-type ${signal.signal.toLowerCase()}">${signal.signal}</td>
+        `;
+        tbody.appendChild(row);
     });
 }
 
-// Update portfolio statistics with animations
-function updatePortfolioStats(stats) {
-    animateValue('portfolioValue', stats.portfolioValue, '$');
-    animateValue('cashBalance', stats.cash, '$');
-    animateValue('dailyReturn', stats.dailyReturn, '%');
-    animateValue('sharpeRatio', stats.sharpeRatio, '', 2);
-    animateValue('maxDrawdown', stats.maxDrawdown, '%');
-}
-
-// Update strategy performance metrics
-function updateStrategyPerformance(stats) {
-    animateValue('winRate', stats.winRate, '%');
-    animateValue('totalTrades', stats.totalTrades);
-    animateValue('winningTrades', stats.winningTrades);
+// Update performance metrics with animations
+function updatePerformanceMetrics(data) {
+    // Portfolio value with animation
+    animateValue('portfolioValue', data.portfolio_value, '$');
+    animateValue('cashBalance', data.cash, '$');
+    
+    // Performance metrics
+    document.getElementById('dailyReturn').textContent = 
+        `${(data.daily_return * 100).toFixed(2)}%`;
+    document.getElementById('sharpeRatio').textContent = 
+        data.sharpe_ratio.toFixed(2);
+    document.getElementById('winRate').textContent = 
+        `${data.win_rate.toFixed(1)}%`;
+    
+    // Update positions table
+    updatePositionsTable(data.positions);
 }
 
 // Animate value changes
-function animateValue(elementId, newValue, prefix = '', decimals = 2) {
+function animateValue(elementId, newValue, prefix = '') {
     const element = document.getElementById(elementId);
-    if (!element) return;
-    
-    const start = parseFloat(element.getAttribute('data-value') || '0');
-    const end = parseFloat(newValue);
+    const startValue = parseFloat(element.getAttribute('data-value') || '0');
     const duration = 1000;
-    const startTime = performance.now();
+    const steps = 60;
+    const increment = (newValue - startValue) / steps;
     
-    const updateDisplay = (currentTime) => {
-        const elapsed = currentTime - startTime;
-        const progress = Math.min(elapsed / duration, 1);
-        
-        // Easing function for smooth animation
-        const easeOutQuad = progress => 1 - (1 - progress) * (1 - progress);
-        const current = start + (end - start) * easeOutQuad(progress);
-        
-        // Format the value
-        const formatted = prefix + current.toLocaleString('en-US', {
-            minimumFractionDigits: decimals,
-            maximumFractionDigits: decimals
-        });
-        
-        element.textContent = formatted;
-        element.setAttribute('data-value', current);
-        
-        // Add color class based on value
-        element.className = current > 0 ? 'positive' : current < 0 ? 'negative' : 'neutral';
-        
-        if (progress < 1) {
-            requestAnimationFrame(updateDisplay);
-        }
-    };
-    
-    requestAnimationFrame(updateDisplay);
-}
-
-// Update the performance chart
-function updatePerformanceChart(data) {
-    if (!performanceChart) return;
-    
-    performanceChart.data.labels = data.dates;
-    performanceChart.data.datasets[0].data = data.values;
-    performanceChart.update();
-}
-
-// Update recent trades table
-function updateRecentTrades(trades) {
-    const tbody = document.getElementById('recentTradesTable').getElementsByTagName('tbody')[0];
-    tbody.innerHTML = '';
-    
-    trades.forEach(trade => {
-        const row = tbody.insertRow();
-        
-        // Time
-        const timeCell = row.insertCell(0);
-        timeCell.textContent = new Date(trade.time).toLocaleString();
-        
-        // Ticker
-        const tickerCell = row.insertCell(1);
-        tickerCell.textContent = trade.ticker;
-        tickerCell.className = 'fw-bold';
-        
-        // Type
-        const typeCell = row.insertCell(2);
-        typeCell.textContent = trade.type;
-        typeCell.className = `${trade.type === 'BUY' ? 'positive' : 'negative'} fw-bold`;
-        
-        // Price
-        const priceCell = row.insertCell(3);
-        priceCell.textContent = `$${parseFloat(trade.price).toLocaleString('en-US', {
+    let currentStep = 0;
+    const interval = setInterval(() => {
+        currentStep++;
+        const currentValue = startValue + (increment * currentStep);
+        element.textContent = `${prefix}${currentValue.toLocaleString('en-US', {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
         })}`;
         
-        // Quantity
-        const qtyCell = row.insertCell(4);
-        qtyCell.textContent = trade.quantity;
+        if (currentStep >= steps) {
+            clearInterval(interval);
+            element.setAttribute('data-value', newValue);
+        }
+    }, duration / steps);
+}
+
+// Update portfolio chart
+function updatePortfolioChart(data) {
+    const timestamps = data.daily_returns.map((_, index) => {
+        const date = new Date();
+        date.setDate(date.getDate() - (data.daily_returns.length - index - 1));
+        return date.toLocaleDateString();
+    });
+
+    const portfolioValues = data.daily_returns.map((return_value, index) => {
+        return data.portfolio_value * (1 + return_value);
+    });
+
+    performanceChart.data.labels = timestamps;
+    performanceChart.data.datasets[0].data = portfolioValues;
+    performanceChart.update();
+}
+
+// Update trades table with latest trades
+function updateTradesTable(trades) {
+    const table = document.getElementById('tradesTable');
+    const tbody = table.querySelector('tbody');
+    tbody.innerHTML = '';
+
+    trades.reverse().forEach(trade => {
+        const row = document.createElement('tr');
+        const typeClass = trade.type === 'BUY' ? 'buy' : 'sell';
+        
+        row.innerHTML = `
+            <td>${trade.time}</td>
+            <td class="font-weight-bold">${trade.ticker}</td>
+            <td class="${typeClass}">${trade.type}</td>
+            <td>$${trade.price.toFixed(2)}</td>
+            <td>${trade.quantity}</td>
+            <td>$${(trade.price * trade.quantity).toFixed(2)}</td>
+        `;
+        tbody.appendChild(row);
     });
 }
 
-// Flash updated values with improved animation
-function flashUpdatedValues() {
-    const elements = document.querySelectorAll('.signal-row, .trade-row');
-    elements.forEach(element => {
-        element.classList.add('flash');
-        setTimeout(() => element.classList.remove('flash'), 500);
+// Update positions table
+function updatePositionsTable(positions) {
+    const table = document.getElementById('positionsTable');
+    const tbody = table.querySelector('tbody');
+    tbody.innerHTML = '';
+
+    Object.entries(positions).forEach(([ticker, position]) => {
+        const row = document.createElement('tr');
+        const value = position.quantity * position.price;
+        
+        row.innerHTML = `
+            <td class="font-weight-bold">${ticker}</td>
+            <td>${position.quantity}</td>
+            <td>$${position.price.toFixed(2)}</td>
+            <td>$${value.toFixed(2)}</td>
+            <td>${new Date(position.timestamp).toLocaleString()}</td>
+        `;
+        tbody.appendChild(row);
     });
-} 
+}
+
+// Update last update time
+function updateLastUpdateTime() {
+    lastUpdateTime = new Date();
+    document.getElementById('lastUpdate').textContent = 
+        `Last updated: ${lastUpdateTime.toLocaleString()}`;
+}
+
+// Show error message
+function showErrorMessage(message) {
+    const alertDiv = document.getElementById('alertMessage');
+    alertDiv.textContent = message;
+    alertDiv.classList.remove('d-none');
+    setTimeout(() => alertDiv.classList.add('d-none'), 5000);
+}
+
+// Initialize dashboard when DOM is loaded
+document.addEventListener('DOMContentLoaded', initializeDashboard); 
