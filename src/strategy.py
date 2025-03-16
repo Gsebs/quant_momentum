@@ -68,14 +68,6 @@ BATCH_DELAY = 30  # Delay between batches in seconds
 CACHE_KEY = "momentum_signals"
 CACHE_EXPIRY = 300  # 5 minutes
 
-# Redis client for caching
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
-redis_client = redis.from_url(
-    REDIS_URL,
-    ssl_cert_reqs=None,
-    decode_responses=False
-)
-
 def calculate_momentum_score(prices: pd.Series) -> float:
     """
     Calculate momentum score based on multiple timeframes
@@ -154,6 +146,10 @@ def determine_signal(momentum_score: float) -> str:
 def get_cached_signals() -> Optional[Dict]:
     """Get cached signals from Redis"""
     try:
+        if redis_client is None:
+            logger.error("Redis client not available")
+            return None
+            
         signals = redis_client.get('momentum_signals')
         if signals:
             return json.loads(signals)
@@ -164,6 +160,10 @@ def get_cached_signals() -> Optional[Dict]:
 def cache_signals(signals: Dict):
     """Cache signals to Redis"""
     try:
+        if redis_client is None:
+            logger.error("Redis client not available")
+            return
+            
         redis_client.set('momentum_signals', json.dumps(signals))
         redis_client.expire('momentum_signals', 300)  # Expire after 5 minutes
     except Exception as e:
@@ -254,11 +254,11 @@ def run_strategy(tickers: List[str]) -> Dict[str, Dict]:
     try:
         # Check cache first
         cached_signals = get_cached_signals()
-        if cached_signals:
+        if cached_signals and isinstance(cached_signals, dict):
             # Only use cache if less than 5 minutes old
             cache_time = cached_signals.get('timestamp')
             if cache_time and (datetime.now() - datetime.fromisoformat(cache_time)).seconds < 300:
-                return cached_signals
+                return cached_signals.get('signals', {})
         
         for ticker in tickers:
             try:

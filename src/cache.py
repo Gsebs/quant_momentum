@@ -26,12 +26,12 @@ def get_redis_client():
         client = redis.from_url(
             redis_url,
             ssl_cert_reqs=None,
-            decode_responses=True,
-            socket_timeout=15,  # Increased timeout
+            decode_responses=True,  # Always decode responses
+            socket_timeout=15,
             socket_connect_timeout=15,
             retry_on_timeout=True,
             retry=redis_retry,
-            max_connections=50,  # Increased pool size
+            max_connections=50,
             health_check_interval=15
         )
         # Test connection
@@ -55,30 +55,38 @@ requests_cache.install_cache(
 
 def serialize_value(value: Any) -> str:
     """Serialize value for Redis storage."""
-    if isinstance(value, pd.DataFrame):
-        return json.dumps({
-            'type': 'dataframe',
-            'data': value.to_dict(orient='split')
-        })
-    elif isinstance(value, np.ndarray):
-        return json.dumps({
-            'type': 'ndarray',
-            'data': value.tolist()
-        })
-    elif isinstance(value, (dict, list)):
-        return json.dumps({
-            'type': 'json',
-            'data': value
-        })
-    else:
-        return json.dumps({
-            'type': 'primitive',
-            'data': value
-        })
+    try:
+        if isinstance(value, pd.DataFrame):
+            return json.dumps({
+                'type': 'dataframe',
+                'data': value.to_dict(orient='split')
+            })
+        elif isinstance(value, np.ndarray):
+            return json.dumps({
+                'type': 'ndarray',
+                'data': value.tolist()
+            })
+        elif isinstance(value, (dict, list)):
+            return json.dumps({
+                'type': 'json',
+                'data': value
+            })
+        else:
+            return json.dumps({
+                'type': 'primitive',
+                'data': value
+            })
+    except Exception as e:
+        logger.error(f"Error serializing value: {str(e)}")
+        return json.dumps({'type': 'error', 'data': str(e)})
 
 def deserialize_value(value_str: str) -> Any:
     """Deserialize value from Redis storage."""
     try:
+        if not isinstance(value_str, str):
+            logger.error(f"Expected string value, got {type(value_str)}")
+            return None
+            
         value_dict = json.loads(value_str)
         value_type = value_dict.get('type')
         value_data = value_dict.get('data')
@@ -89,6 +97,9 @@ def deserialize_value(value_str: str) -> Any:
             return np.array(value_data)
         elif value_type == 'json':
             return value_data
+        elif value_type == 'error':
+            logger.error(f"Deserialized error value: {value_data}")
+            return None
         else:
             return value_data
     except Exception as e:
