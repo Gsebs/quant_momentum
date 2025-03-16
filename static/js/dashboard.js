@@ -130,21 +130,49 @@ async function updateDashboard() {
         showLoadingState(true);
         
         // Update momentum signals
-        const signalsResponse = await fetch('/api/signals');
+        const signalsResponse = await fetch('/api/momentum-signals');
         const signalsData = await signalsResponse.json();
         
         // Update performance data
         const performanceResponse = await fetch('/api/performance');
         const performanceData = await performanceResponse.json();
         
-        if (performanceData.status === 'success') {
-            // Update all metrics
-            updatePortfolioStats(performanceData.portfolio_stats);
-            updateStrategyPerformance(performanceData.strategy_performance);
-            updateModelMetrics(performanceData.model_metrics);
-            updateSignalsTable(signalsData);
-            updatePerformanceChart(performanceData.performance_data);
-            updateRecentTrades(performanceData.recent_trades);
+        if (performanceData.status === 'success' && performanceData.data) {
+            const data = performanceData.data;
+            
+            // Update portfolio value and positions
+            updatePortfolioStats({
+                portfolioValue: data.portfolio_value,
+                cash: data.cash,
+                dailyReturn: data.daily_return * 100,
+                sharpeRatio: data.sharpe_ratio,
+                maxDrawdown: data.max_drawdown * 100
+            });
+            
+            // Update strategy performance
+            updateStrategyPerformance({
+                winRate: data.win_rate,
+                totalTrades: data.total_trades,
+                winningTrades: data.winning_trades
+            });
+            
+            // Update signals table if we have signals
+            if (signalsData.status === 'success' && signalsData.data) {
+                updateSignalsTable(signalsData.data);
+            }
+            
+            // Update performance chart with daily returns
+            updatePerformanceChart({
+                values: data.daily_returns.map(ret => (1 + ret) * 1000000),
+                dates: data.daily_returns.map((_, i) => {
+                    const date = new Date();
+                    date.setDate(date.getDate() - (data.daily_returns.length - i - 1));
+                    return date.toISOString().split('T')[0];
+                })
+            });
+            
+            // Update recent trades
+            updateRecentTrades(data.recent_trades);
             
             // Flash updated values
             flashUpdatedValues();
@@ -156,7 +184,7 @@ async function updateDashboard() {
                 
             showError(null);
         } else {
-            showError('Failed to update dashboard data');
+            showError(performanceData.message || 'Failed to update dashboard data');
         }
     } catch (error) {
         console.error('Error updating dashboard:', error);
@@ -263,100 +291,80 @@ function updateSignalsTable(signals) {
     });
 }
 
-// Update portfolio statistics with improved animations
+// Update portfolio statistics with animations
 function updatePortfolioStats(stats) {
-    if (!stats) return;
-    
-    // Portfolio value with currency formatting
-    animateValue('portfolioValue', stats.portfolio_value, '$', '', true);
-    
-    // Daily return with color coding
-    const dailyReturnElement = document.getElementById('dailyReturn');
-    const dailyReturn = stats.daily_return;
-    dailyReturnElement.textContent = `${dailyReturn >= 0 ? '+' : ''}${dailyReturn.toFixed(2)}%`;
-    dailyReturnElement.className = `badge ${dailyReturn >= 0 ? 'bg-success' : 'bg-danger'}`;
-    
-    // Risk metrics
-    animateValue('sharpeRatio', stats.sharpe_ratio, '', '', false);
-    animateValue('maxDrawdown', stats.max_drawdown, '', '%', false);
+    animateValue('portfolioValue', stats.portfolioValue, '$');
+    animateValue('cashBalance', stats.cash, '$');
+    animateValue('dailyReturn', stats.dailyReturn, '%');
+    animateValue('sharpeRatio', stats.sharpeRatio, '', 2);
+    animateValue('maxDrawdown', stats.maxDrawdown, '%');
 }
 
 // Update strategy performance metrics
-function updateStrategyPerformance(performance) {
-    if (!performance) return;
-    
-    animateValue('winRate', performance.win_rate, '', '%', false);
-    animateValue('profitFactor', performance.profit_factor, '', '', false);
+function updateStrategyPerformance(stats) {
+    animateValue('winRate', stats.winRate, '%');
+    animateValue('totalTrades', stats.totalTrades);
+    animateValue('winningTrades', stats.winningTrades);
 }
 
-// Update model metrics
-function updateModelMetrics(metrics) {
-    if (!metrics) return;
-    
-    animateValue('modelAccuracy', metrics.prediction_accuracy, '', '%', false);
-    animateValue('signalStrength', metrics.signal_strength, '', '', false);
-}
-
-// Animate value changes with improved smoothness
-function animateValue(elementId, newValue, prefix = '', suffix = '', isCurrency = false) {
+// Animate value changes
+function animateValue(elementId, newValue, prefix = '', decimals = 2) {
     const element = document.getElementById(elementId);
     if (!element) return;
     
-    const oldValue = parseFloat(element.textContent.replace(/[^0-9.-]+/g, ''));
+    const start = parseFloat(element.getAttribute('data-value') || '0');
+    const end = parseFloat(newValue);
     const duration = 1000;
-    const steps = 60;
-    const increment = (newValue - oldValue) / steps;
+    const startTime = performance.now();
     
-    let currentStep = 0;
-    const interval = setInterval(() => {
-        currentStep++;
-        const currentValue = oldValue + (increment * currentStep);
+    const updateDisplay = (currentTime) => {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
         
-        element.textContent = `${prefix}${isCurrency ? 
-            currentValue.toLocaleString('en-US', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2
-            }) :
-            currentValue.toFixed(2)}${suffix}`;
+        // Easing function for smooth animation
+        const easeOutQuad = progress => 1 - (1 - progress) * (1 - progress);
+        const current = start + (end - start) * easeOutQuad(progress);
         
-        if (currentStep >= steps) {
-            clearInterval(interval);
-            element.textContent = `${prefix}${isCurrency ? 
-                newValue.toLocaleString('en-US', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2
-                }) :
-                newValue.toFixed(2)}${suffix}`;
+        // Format the value
+        const formatted = prefix + current.toLocaleString('en-US', {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals
+        });
+        
+        element.textContent = formatted;
+        element.setAttribute('data-value', current);
+        
+        // Add color class based on value
+        element.className = current > 0 ? 'positive' : current < 0 ? 'negative' : 'neutral';
+        
+        if (progress < 1) {
+            requestAnimationFrame(updateDisplay);
         }
-    }, duration / steps);
+    };
+    
+    requestAnimationFrame(updateDisplay);
 }
 
-// Update performance chart with improved animations
+// Update the performance chart
 function updatePerformanceChart(data) {
-    if (!data || !data.dates || !data.values) return;
+    if (!performanceChart) return;
     
     performanceChart.data.labels = data.dates;
     performanceChart.data.datasets[0].data = data.values;
-    
-    // Update chart with smooth animation
-    performanceChart.update('active');
+    performanceChart.update();
 }
 
-// Update recent trades table with improved formatting
+// Update recent trades table
 function updateRecentTrades(trades) {
-    if (!trades || !trades.length) return;
-    
-    const tbody = document.getElementById('tradesTable').getElementsByTagName('tbody')[0];
+    const tbody = document.getElementById('recentTradesTable').getElementsByTagName('tbody')[0];
     tbody.innerHTML = '';
     
     trades.forEach(trade => {
         const row = tbody.insertRow();
-        row.className = 'trade-row';
         
         // Time
         const timeCell = row.insertCell(0);
-        const time = new Date(trade.time);
-        timeCell.textContent = time.toLocaleString();
+        timeCell.textContent = new Date(trade.time).toLocaleString();
         
         // Ticker
         const tickerCell = row.insertCell(1);
@@ -370,14 +378,14 @@ function updateRecentTrades(trades) {
         
         // Price
         const priceCell = row.insertCell(3);
-        priceCell.textContent = `$${trade.price.toLocaleString('en-US', {
+        priceCell.textContent = `$${parseFloat(trade.price).toLocaleString('en-US', {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
         })}`;
         
         // Quantity
-        const quantityCell = row.insertCell(4);
-        quantityCell.textContent = trade.quantity.toLocaleString('en-US');
+        const qtyCell = row.insertCell(4);
+        qtyCell.textContent = trade.quantity;
     });
 }
 
