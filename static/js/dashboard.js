@@ -1,5 +1,6 @@
 // Initialize performance chart
 let performanceChart;
+let lastUpdateTime = new Date();
 
 // Initialize the dashboard
 document.addEventListener('DOMContentLoaded', function() {
@@ -37,7 +38,7 @@ function initializeChart() {
                     intersect: false,
                     callbacks: {
                         label: function(context) {
-                            return `$${context.parsed.y.toFixed(2)}`;
+                            return `$${context.parsed.y.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
                         }
                     }
                 }
@@ -50,7 +51,7 @@ function initializeChart() {
                     },
                     ticks: {
                         callback: function(value) {
-                            return '$' + value.toFixed(0);
+                            return '$' + value.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0});
                         }
                     }
                 },
@@ -59,6 +60,14 @@ function initializeChart() {
                         display: false
                     }
                 }
+            },
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+            animation: {
+                duration: 750,
+                easing: 'easeInOutQuart'
             }
         }
     });
@@ -79,19 +88,23 @@ async function updateDashboard() {
         const performanceData = await performanceResponse.json();
         
         if (performanceData.status === 'success') {
-            // Update portfolio statistics
+            // Update portfolio statistics with animation
             updatePortfolioStats(performanceData.portfolio_stats);
             
             // Update performance chart
-            updatePerformanceChart(performanceData.data);
+            updatePerformanceChart(performanceData.performance_data);
             
             // Update recent trades
             updateRecentTrades(performanceData.recent_trades);
+            
+            // Flash updated values
+            flashUpdatedValues();
         }
         
         // Update last update time
+        lastUpdateTime = new Date();
         document.getElementById('last-update').textContent = 
-            `Last updated: ${new Date().toLocaleTimeString()}`;
+            `Last updated: ${lastUpdateTime.toLocaleTimeString()}`;
             
     } catch (error) {
         console.error('Error updating dashboard:', error);
@@ -105,53 +118,67 @@ function updateSignalsTable(signals) {
     
     Object.entries(signals).forEach(([ticker, signal]) => {
         const row = tbody.insertRow();
+        row.className = 'signal-row';
         
         // Add cells
         row.insertCell(0).textContent = ticker;
         
         const signalCell = row.insertCell(1);
-        signalCell.textContent = signal.momentum_score > 0 ? 'BUY' : 'SELL';
+        signalCell.textContent = signal.signal || (signal.momentum_score > 0 ? 'BUY' : 'SELL');
         signalCell.className = signal.momentum_score > 0 ? 'positive' : 'negative';
         
         row.insertCell(2).textContent = signal.momentum_score.toFixed(2);
-        row.insertCell(3).textContent = `$${signal.current_price.toFixed(2)}`;
+        
+        const priceCell = row.insertCell(3);
+        priceCell.textContent = `$${signal.current_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
         
         const changeCell = row.insertCell(4);
-        const change = signal.price_change;
-        changeCell.textContent = `${(change * 100).toFixed(2)}%`;
+        const change = signal.price_change * 100;
+        changeCell.textContent = `${change.toFixed(2)}%`;
         changeCell.className = change >= 0 ? 'positive' : 'negative';
     });
 }
 
-// Update portfolio statistics
+// Update portfolio statistics with animation
 function updatePortfolioStats(stats) {
     if (!stats) return;
     
-    document.getElementById('portfolioValue').textContent = 
-        `$${stats.portfolio_value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    animateValue('portfolioValue', stats.portfolio_value, '$');
+    animateValue('dailyReturn', stats.daily_return, '%');
+    animateValue('sharpeRatio', stats.sharpe_ratio);
+    animateValue('maxDrawdown', stats.max_drawdown, '%');
+}
+
+// Animate value changes
+function animateValue(elementId, newValue, prefix = '', suffix = '') {
+    const element = document.getElementById(elementId);
+    const oldValue = parseFloat(element.textContent.replace(/[^0-9.-]+/g, ''));
+    const duration = 1000; // Animation duration in ms
+    const steps = 60; // Number of steps in animation
+    const increment = (newValue - oldValue) / steps;
     
-    const dailyReturn = document.getElementById('dailyReturn');
-    dailyReturn.textContent = `${(stats.daily_return * 100).toFixed(2)}%`;
-    dailyReturn.className = stats.daily_return >= 0 ? 'positive' : 'negative';
-    
-    document.getElementById('sharpeRatio').textContent = 
-        stats.sharpe_ratio.toFixed(2);
-    
-    document.getElementById('maxDrawdown').textContent = 
-        `${(stats.max_drawdown * 100).toFixed(2)}%`;
+    let currentStep = 0;
+    const interval = setInterval(() => {
+        currentStep++;
+        const currentValue = oldValue + (increment * currentStep);
+        element.textContent = `${prefix}${currentValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}${suffix}`;
+        
+        if (currentStep >= steps) {
+            clearInterval(interval);
+            element.textContent = `${prefix}${newValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}${suffix}`;
+        }
+    }, duration / steps);
 }
 
 // Update performance chart
 function updatePerformanceChart(data) {
-    if (!data || !data.returns) return;
+    if (!data || !data.dates || !data.values) return;
     
-    const returns = data.returns;
-    const dates = returns.map(r => new Date(r.Date).toLocaleDateString());
-    const values = returns.map(r => r['Portfolio Value']);
+    performanceChart.data.labels = data.dates;
+    performanceChart.data.datasets[0].data = data.values;
     
-    performanceChart.data.labels = dates;
-    performanceChart.data.datasets[0].data = values;
-    performanceChart.update();
+    // Update chart with animation
+    performanceChart.update('active');
 }
 
 // Update recent trades table
@@ -163,10 +190,11 @@ function updateRecentTrades(trades) {
     
     trades.forEach(trade => {
         const row = tbody.insertRow();
+        row.className = 'trade-row';
         
-        // Format date
-        const date = new Date(trade.date);
-        row.insertCell(0).textContent = date.toLocaleString();
+        // Format time
+        const time = new Date(trade.time);
+        row.insertCell(0).textContent = time.toLocaleString();
         
         // Add other cells
         row.insertCell(1).textContent = trade.ticker;
@@ -175,7 +203,19 @@ function updateRecentTrades(trades) {
         typeCell.textContent = trade.type;
         typeCell.className = trade.type === 'BUY' ? 'positive' : 'negative';
         
-        row.insertCell(3).textContent = `$${trade.price.toFixed(2)}`;
-        row.insertCell(4).textContent = trade.quantity;
+        const priceCell = row.insertCell(3);
+        priceCell.textContent = `$${trade.price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+        
+        const quantityCell = row.insertCell(4);
+        quantityCell.textContent = trade.quantity.toLocaleString('en-US');
+    });
+}
+
+// Flash updated values
+function flashUpdatedValues() {
+    const elements = document.querySelectorAll('.signal-row, .trade-row');
+    elements.forEach(element => {
+        element.classList.add('flash');
+        setTimeout(() => element.classList.remove('flash'), 500);
     });
 } 
