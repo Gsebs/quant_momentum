@@ -78,10 +78,10 @@ redis_client = redis.from_url(
 def get_cached_signals() -> Optional[List[Dict]]:
     """Get cached momentum signals."""
     try:
-        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-        redis_client = redis.from_url(redis_url, ssl_cert_reqs=None, decode_responses=True)
-        cached = redis_client.get(CACHE_KEY)
-        return eval(cached) if cached else None
+        cached = redis_client.get('momentum_signals')
+        if cached:
+            return pickle.loads(cached.encode('latin1'))
+        return None
     except Exception as e:
         logger.error(f"Error getting cached signals: {e}")
         return None
