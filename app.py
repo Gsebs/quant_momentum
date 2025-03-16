@@ -7,6 +7,14 @@ from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
+)
+logger = logging.getLogger(__name__)
+
 # Add the project root directory to Python path
 project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
@@ -14,8 +22,9 @@ sys.path.insert(0, project_root)
 try:
     from src.strategy import run_strategy, get_cached_signals, RELIABLE_TICKERS
     from src.cache import clear_cache
+    logger.info("Successfully imported strategy modules")
 except ImportError as e:
-    print(f"Error importing modules: {e}")
+    logger.error(f"Error importing modules: {str(e)}")
     sys.exit(1)
 
 from datetime import datetime, timedelta
@@ -28,14 +37,6 @@ import json
 from redis.retry import Retry
 from redis.backoff import ExponentialBackoff
 from redis.exceptions import ConnectionError, TimeoutError
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stdout
-)
-logger = logging.getLogger(__name__)
 
 app = Flask(__name__, 
     static_folder='static',
