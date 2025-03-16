@@ -1,11 +1,11 @@
 """
-Momentum Trading Strategy Package
+Quant Momentum Trading Algorithm Package
 """
-
-__version__ = '1.0.0'
-__author__ = 'Gerald'
 
 from .strategy import run_strategy, get_cached_signals, RELIABLE_TICKERS
 from .cache import clear_cache
+
+__version__ = '1.0.0'
+
 from .data import get_stock_data
 from .momentum import calculate_momentum_score 

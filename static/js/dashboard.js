@@ -2,77 +2,87 @@
 let performanceChart;
 let lastUpdateTime = new Date();
 const updateInterval = 5000; // Update every 5 seconds
+let retryCount = 0;
+const maxRetries = 3;
 
 // Initialize the dashboard
 async function initializeDashboard() {
-    // Initialize performance chart
-    const ctx = document.getElementById('performanceChart').getContext('2d');
-    performanceChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: [],
-            datasets: [{
-                label: 'Portfolio Value',
-                data: [],
-                borderColor: 'rgb(75, 192, 192)',
-                tension: 0.1,
-                fill: false
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: {
-                duration: 750,
-                easing: 'easeInOutQuart'
+    try {
+        // Initialize performance chart
+        const ctx = document.getElementById('performanceChart').getContext('2d');
+        performanceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Portfolio Value',
+                    data: [],
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.1,
+                    fill: false
+                }]
             },
-            scales: {
-                y: {
-                    beginAtZero: false,
-                    grid: {
-                        color: 'rgba(255, 255, 255, 0.1)'
-                    }
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: {
+                    duration: 750,
+                    easing: 'easeInOutQuart'
                 },
-                x: {
-                    grid: {
-                        color: 'rgba(255, 255, 255, 0.1)'
-                    }
-                }
-            },
-            plugins: {
-                tooltip: {
-                    mode: 'index',
-                    intersect: false,
-                    callbacks: {
-                        label: function(context) {
-                            return `$${context.parsed.y.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
                         }
                     }
                 },
-                legend: {
-                    labels: {
-                        font: {
-                            size: 14
+                plugins: {
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function(context) {
+                                return `$${context.parsed.y.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                            }
+                        }
+                    },
+                    legend: {
+                        labels: {
+                            font: {
+                                size: 14
+                            }
                         }
                     }
                 }
             }
-        }
-    });
+        });
 
-    // Start real-time updates
-    updateDashboard();
-    setInterval(updateDashboard, updateInterval);
+        // Start real-time updates
+        await updateDashboard();
+        setInterval(updateDashboard, updateInterval);
+    } catch (error) {
+        console.error('Error initializing dashboard:', error);
+        showErrorMessage('Failed to initialize dashboard. Please refresh the page.');
+    }
 }
 
 // Update dashboard with latest data
 async function updateDashboard() {
     try {
-        // Fetch momentum signals and performance data
         const [signalsResponse, performanceResponse] = await Promise.all([
-            fetch('/api/momentum-signals'),
-            fetch('/api/performance')
+            fetchWithRetry('/api/momentum-signals'),
+            fetchWithRetry('/api/performance')
         ]);
+
+        if (!signalsResponse.ok || !performanceResponse.ok) {
+            throw new Error('API request failed');
+        }
 
         const signalsData = await signalsResponse.json();
         const performanceData = await performanceResponse.json();
@@ -83,11 +93,35 @@ async function updateDashboard() {
             updatePortfolioChart(performanceData.data);
             updateTradesTable(performanceData.data.recent_trades);
             updateLastUpdateTime();
+            retryCount = 0; // Reset retry count on successful update
+        } else if (signalsData.status === 'updating') {
+            showInfoMessage('Data is being updated. Please wait...');
+        } else {
+            throw new Error('Invalid API response');
         }
     } catch (error) {
         console.error('Error updating dashboard:', error);
-        showErrorMessage('Failed to update dashboard. Retrying...');
+        retryCount++;
+        if (retryCount >= maxRetries) {
+            showErrorMessage('Failed to update dashboard after multiple attempts. Please refresh the page.');
+        } else {
+            showErrorMessage(`Failed to update dashboard. Retrying... (${retryCount}/${maxRetries})`);
+        }
     }
+}
+
+// Fetch with retry logic
+async function fetchWithRetry(url, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const response = await fetch(url);
+            if (response.ok) return response;
+        } catch (error) {
+            if (i === retries - 1) throw error;
+            await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+        }
+    }
+    throw new Error(`Failed to fetch ${url} after ${retries} retries`);
 }
 
 // Update signals table with latest momentum data
@@ -220,11 +254,21 @@ function updateLastUpdateTime() {
         `Last updated: ${lastUpdateTime.toLocaleString()}`;
 }
 
+// Show info message
+function showInfoMessage(message) {
+    const alertDiv = document.getElementById('alertMessage');
+    alertDiv.textContent = message;
+    alertDiv.classList.remove('d-none', 'alert-danger');
+    alertDiv.classList.add('alert-info');
+    // Don't auto-hide info messages
+}
+
 // Show error message
 function showErrorMessage(message) {
     const alertDiv = document.getElementById('alertMessage');
     alertDiv.textContent = message;
-    alertDiv.classList.remove('d-none');
+    alertDiv.classList.remove('d-none', 'alert-info');
+    alertDiv.classList.add('alert-danger');
     setTimeout(() => alertDiv.classList.add('d-none'), 5000);
 }
 

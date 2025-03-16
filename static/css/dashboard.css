@@ -17,6 +17,46 @@ body {
     color: #333;
 }
 
+/* Real-time Status Indicator */
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background-color: rgba(40, 167, 69, 0.1);
+    border-radius: 20px;
+    width: fit-content;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    background-color: var(--success-color);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+.status-text {
+    font-size: 0.9rem;
+    color: var(--success-color);
+    font-weight: 500;
+}
+
+@keyframes pulse {
+    0% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+    }
+    70% {
+        transform: scale(1);
+        box-shadow: 0 0 0 6px rgba(40, 167, 69, 0);
+    }
+    100% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
+    }
+}
+
 /* Card Styles */
 .card {
     background: white;
@@ -40,10 +80,49 @@ body {
     font-size: 1.1rem;
     border-top-left-radius: 10px !important;
     border-top-right-radius: 10px !important;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .card-body {
     padding: 1.5rem;
+}
+
+/* Metric Cards */
+.metric-card {
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.metric-card:hover {
+    background-color: var(--light-color);
+}
+
+.metric-card h3 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin: 0.5rem 0;
+}
+
+.metric-card small {
+    font-size: 0.9rem;
+}
+
+/* Chart Controls */
+.chart-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.chart-controls .btn {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.875rem;
+}
+
+.chart-controls .btn.active {
+    background-color: var(--primary-color);
+    color: white;
 }
 
 /* Table Styles */
@@ -58,12 +137,14 @@ body {
     text-transform: uppercase;
     font-size: 0.8rem;
     letter-spacing: 0.5px;
+    padding: 1rem;
 }
 
 .table td {
     vertical-align: middle;
     padding: 1rem;
     border-color: rgba(0, 0, 0, 0.05);
+    font-size: 0.95rem;
 }
 
 /* Signal Types */
@@ -111,60 +192,22 @@ body {
     width: 100%;
 }
 
-/* Metrics Grid */
-.metrics-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-}
-
-.metric-card {
-    background: white;
-    padding: 1.25rem;
-    border-radius: 8px;
-    text-align: center;
-}
-
-.metric-value {
-    font-size: 1.5rem;
-    font-weight: 700;
-    margin: 0.5rem 0;
-}
-
-.metric-label {
-    color: var(--gray-color);
-    font-size: 0.9rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-/* Animations */
-@keyframes flash {
-    0% {
-        background-color: rgba(13, 110, 253, 0.1);
-    }
-    100% {
-        background-color: transparent;
-    }
-}
-
-.flash {
-    animation: flash 0.5s ease-out;
-}
-
-/* Loading State */
+/* Loading Indicator */
 .loading-indicator {
     display: none;
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
+    background-color: rgba(255, 255, 255, 0.9);
+    padding: 2rem;
+    border-radius: 10px;
+    text-align: center;
 }
 
 .loading-spinner {
-    width: 2rem;
-    height: 2rem;
+    width: 2.5rem;
+    height: 2.5rem;
     border: 3px solid rgba(0, 0, 0, 0.1);
     border-radius: 50%;
     border-top-color: var(--primary-color);
@@ -193,18 +236,27 @@ body {
     color: var(--danger-color);
 }
 
+.alert-info {
+    background-color: rgba(23, 162, 184, 0.1);
+    color: var(--info-color);
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
-    .metrics-grid {
-        grid-template-columns: repeat(2, 1fr);
+    .card-body {
+        padding: 1rem;
     }
     
     .table-responsive {
         margin-bottom: 0;
     }
     
-    .card-body {
-        padding: 1rem;
+    .chart-controls {
+        flex-wrap: wrap;
+    }
+    
+    .metric-card h3 {
+        font-size: 1.5rem;
     }
 }
 
@@ -212,7 +264,6 @@ body {
 #lastUpdate {
     color: var(--gray-color);
     font-size: 0.9rem;
-    text-align: right;
     margin-top: 0.5rem;
 }
 
@@ -237,6 +288,7 @@ body {
     opacity: 0;
     visibility: hidden;
     transition: opacity 0.2s ease, visibility 0.2s ease;
+    z-index: 1000;
 }
 
 [data-tooltip]:hover:before {
@@ -256,10 +308,10 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #c1c1c1;
+    background: #888;
     border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #a8a8a8;
+    background: #555;
 } 
