@@ -9,6 +9,7 @@ import yfinance as yf
 from typing import Dict, List, Optional
 import numpy as np
 from .cache import redis_client
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -62,14 +63,23 @@ class PortfolioManager:
             logger.error(f"Error saving portfolio state: {str(e)}")
     
     def get_current_prices(self, tickers: List[str]) -> Dict[str, float]:
-        """Get current prices for a list of tickers"""
+        """Get current prices for a list of tickers using real-time data"""
         prices = {}
         for ticker in tickers:
             try:
                 stock = yf.Ticker(ticker)
-                current_price = stock.info.get('regularMarketPrice')
-                if current_price:
-                    prices[ticker] = float(current_price)
+                # Get real-time quote data
+                quote = stock.history(period='1d', interval='1m')
+                if not quote.empty:
+                    current_price = float(quote['Close'].iloc[-1])
+                    prices[ticker] = current_price
+                    logger.info(f"Got real-time price for {ticker}: ${current_price:.2f}")
+                else:
+                    # Fallback to regular market price if real-time data unavailable
+                    current_price = stock.info.get('regularMarketPrice')
+                    if current_price:
+                        prices[ticker] = float(current_price)
+                        logger.info(f"Using regular market price for {ticker}: ${current_price:.2f}")
             except Exception as e:
                 logger.error(f"Error fetching price for {ticker}: {str(e)}")
         return prices
@@ -83,7 +93,7 @@ class PortfolioManager:
                 logger.error(f"Could not get price for {ticker}")
                 return None
             
-            # Aggressive position sizing (5-15% of portfolio based on momentum score)
+            # Calculate position size (5-15% of portfolio based on momentum score)
             portfolio_value = self.get_portfolio_value()
             base_position_size = 0.05  # 5% minimum position size
             additional_size = min(abs(momentum_score) * 0.10, 0.10)  # Up to additional 10%
@@ -95,21 +105,32 @@ class PortfolioManager:
                 # Always try to buy if we have cash
                 if self.cash >= current_price * quantity:
                     trade = self.execute_buy(ticker, quantity, current_price)
+                    logger.info(f"Executed BUY trade for {ticker}: {quantity} shares at ${current_price:.2f}")
                 else:
                     # Try with smaller quantity if not enough cash
                     max_quantity = int(self.cash / current_price)
                     if max_quantity > 0:
                         trade = self.execute_buy(ticker, max_quantity, current_price)
+                        logger.info(f"Executed smaller BUY trade for {ticker}: {max_quantity} shares at ${current_price:.2f}")
             elif signal == 'SELL':
                 if ticker in self.positions:
                     # Sell existing position
-                    trade = self.execute_sell(ticker, self.positions[ticker]['quantity'], current_price)
+                    quantity_to_sell = self.positions[ticker]['quantity']
+                    trade = self.execute_sell(ticker, quantity_to_sell, current_price)
+                    logger.info(f"Executed SELL trade for {ticker}: {quantity_to_sell} shares at ${current_price:.2f}")
                 else:
                     # Short selling with available cash as collateral
                     if self.cash >= current_price * quantity:
                         trade = self.execute_short(ticker, quantity, current_price)
+                        logger.info(f"Executed SHORT trade for {ticker}: {quantity} shares at ${current_price:.2f}")
             
             if trade:
+                # Calculate P&L if it's a closing trade
+                if signal == 'SELL' and ticker in self.positions:
+                    entry_price = self.positions[ticker]['price']
+                    pnl = (current_price - entry_price) * quantity
+                    trade['pnl'] = pnl
+                
                 self.trades.append(trade)
                 self.total_trades += 1
                 if trade.get('pnl', 0) > 0:
@@ -120,11 +141,14 @@ class PortfolioManager:
                 self.update_portfolio_history()
                 self.save_portfolio_state()
                 
-                logger.info(f"Successfully executed trade: {trade}")
+                logger.info(f"Trade executed successfully: {trade}")
                 return trade
+            else:
+                logger.warning(f"No trade executed for {ticker} with signal {signal}")
             
         except Exception as e:
             logger.error(f"Error executing trade for {ticker}: {str(e)}")
+            logger.error(traceback.format_exc())
         
         return None
     
