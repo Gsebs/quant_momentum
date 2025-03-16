@@ -446,7 +446,7 @@ def redis_cache(expire_time=300):
 
 def get_stock_data(ticker: str) -> Optional[Dict]:
     """
-    Get stock data for a given ticker using Redis caching and yfinance.download.
+    Get stock data for a given ticker using Redis caching and specific date range.
     
     Args:
         ticker (str): The stock ticker symbol
@@ -462,6 +462,10 @@ def get_stock_data(ticker: str) -> Optional[Dict]:
         if cached_data:
             return pickle.loads(cached_data)
             
+        # Calculate date range (1 year ago to today)
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=365)
+        
         # Implement exponential backoff with jitter for data retrieval
         max_retries = 5
         base_delay = 1
@@ -469,10 +473,11 @@ def get_stock_data(ticker: str) -> Optional[Dict]:
         
         for attempt in range(max_retries):
             try:
-                # Get historical data using download function
+                # Get historical data using download function with specific dates
                 df = yf.download(
                     ticker,
-                    period="1y",
+                    start=start_date.strftime('%Y-%m-%d'),
+                    end=end_date.strftime('%Y-%m-%d'),
                     interval="1d",
                     progress=False,
                     show_errors=False,
