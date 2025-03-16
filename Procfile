@@ -1,1 +1,1 @@
-web: PYTHONPATH=$PYTHONPATH:. gunicorn app:app --log-file=- --log-level=info --timeout=120 --workers=2 
+web: pip install -e . && PYTHONPATH=$PYTHONPATH:. gunicorn app:app --log-file=- --log-level=info --timeout=120 --workers=2 
