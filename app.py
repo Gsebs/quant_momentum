@@ -2,7 +2,7 @@ import os
 import sys
 import logging
 import pandas as pd
-from flask import Flask, jsonify, send_file, send_from_directory
+from flask import Flask, jsonify, send_file, send_from_directory, render_template
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -20,7 +20,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
+app = Flask(__name__, 
+    static_folder='static',
+    template_folder='templates'
+)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Configure Redis for rate limiting
@@ -88,15 +91,7 @@ def before_first_request():
 @limiter.exempt
 def home():
     """Home page route."""
-    return jsonify({
-        'status': 'ok',
-        'message': 'Momentum Trading API',
-        'endpoints': [
-            '/api/momentum-signals',
-            '/api/performance',
-            '/api/charts/<filename>'
-        ]
-    })
+    return render_template('index.html')
 
 @app.route('/api/momentum-signals', methods=['GET'])
 @limiter.limit("30/minute")
