@@ -6,7 +6,7 @@ from flask import Flask, jsonify, send_file, send_from_directory, render_templat
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from src.strategy import run_strategy
+from src.strategy import run_strategy, get_cached_signals, RELIABLE_TICKERS
 from src.cache import clear_cache
 from datetime import datetime, timedelta
 import redis
@@ -44,14 +44,6 @@ limiter = Limiter(
     storage_options={"ssl_cert_reqs": None},  # Disable SSL certificate verification
     default_limits=["200 per day", "50 per hour"]
 )
-
-# List of reliable tickers for momentum strategy
-RELIABLE_TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "META",
-    "NVDA", "TSLA", "JPM", "V", "JNJ",
-    "WMT", "PG", "MA", "HD", "UNH",
-    "BAC", "XOM", "PFE", "CSCO", "VZ"
-]
 
 # Create necessary directories on startup
 def ensure_directories():
