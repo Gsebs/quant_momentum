@@ -45,37 +45,44 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Configure Redis with better error handling and retries
 def get_redis_client():
+    """Get Redis client with proper configuration and error handling"""
     redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-    retry = Retry(ExponentialBackoff(), 3)  # Retry 3 times with exponential backoff
     
-    return redis.from_url(
-        redis_url,
-        ssl_cert_reqs=None,
-        decode_responses=True,
-        socket_timeout=5,  # 5 seconds timeout
-        socket_connect_timeout=5,
-        retry=retry
-    )
+    try:
+        client = redis.from_url(
+            redis_url,
+            ssl_cert_reqs=None,
+            decode_responses=True,
+            socket_timeout=5,
+            socket_connect_timeout=5,
+            retry_on_timeout=True,
+            max_connections=20
+        )
+        client.ping()  # Test connection
+        logger.info("Successfully connected to Redis")
+        return client
+    except Exception as e:
+        logger.error(f"Redis connection error: {str(e)}")
+        # Initialize in-memory fallback
+        return FallbackCache()
 
-try:
-    redis_client = get_redis_client()
-    redis_client.ping()  # Test connection
-    logger.info("Successfully connected to Redis")
-except (ConnectionError, TimeoutError) as e:
-    logger.error(f"Failed to connect to Redis: {str(e)}")
-    # Initialize in-memory fallback
-    class FallbackCache:
-        def __init__(self):
-            self._data = {}
-        def get(self, key):
-            return self._data.get(key)
-        def set(self, key, value, ex=None):
-            self._data[key] = value
-        def delete(self, key):
-            self._data.pop(key, None)
+class FallbackCache:
+    """In-memory fallback cache when Redis is unavailable"""
+    def __init__(self):
+        self._data = {}
+        logger.info("Using in-memory fallback cache")
     
-    redis_client = FallbackCache()
-    logger.info("Using in-memory fallback cache")
+    def get(self, key):
+        return self._data.get(key)
+    
+    def set(self, key, value, ex=None):
+        self._data[key] = value
+    
+    def delete(self, key):
+        self._data.pop(key, None)
+    
+    def ping(self):
+        return True
 
 limiter = Limiter(
     app=app,
