@@ -198,7 +198,7 @@ def get_momentum_signals():
             )
             
         signals = run_strategy(RELIABLE_TICKERS)
-        if not signals:
+        if not signals or not isinstance(signals, dict):
             return format_api_response(
                 status='error',
                 message='No signals available',
@@ -212,14 +212,14 @@ def get_momentum_signals():
         # First sort by absolute momentum score
         sorted_signals = sorted(
             [(ticker, data) for ticker, data in signals.items()],
-            key=lambda x: abs(float(x[1].get('momentum_score', 0))),
+            key=lambda x: abs(float(x[1]['momentum_score'])),
             reverse=True
         )
         
         for ticker, data in sorted_signals:
             data['ticker'] = ticker
-            momentum_score = float(data.get('momentum_score', 0))
-            signal = data.get('signal', 'HOLD')
+            momentum_score = float(data['momentum_score'])
+            signal = data['signal']
             
             # Execute trade if signal is strong enough
             if signal in ['BUY', 'SELL'] and abs(momentum_score) >= 0.3:
