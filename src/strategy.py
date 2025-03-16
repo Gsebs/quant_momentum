@@ -44,6 +44,7 @@ import threading
 from queue import Queue
 import redis
 import json
+from .cache import redis_client
 
 # Just basic logging setup to see what's happening
 logging.basicConfig(level=logging.INFO)
@@ -55,8 +56,11 @@ os.makedirs('data/reports', exist_ok=True)
 os.makedirs('data/cache', exist_ok=True)
 os.makedirs('models', exist_ok=True)
 
-# Define reliable tickers (S&P 500 top components)
-RELIABLE_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'BRK-B', 'XOM', 'UNH', 'JNJ']
+# List of reliable tickers to trade
+RELIABLE_TICKERS = [
+    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 
+    'NVDA', 'BRK-B', 'UNH', 'JNJ', 'XOM'
+]
 
 # Constants
 BATCH_SIZE = 2  # Reduced batch size
@@ -72,35 +76,98 @@ redis_client = redis.from_url(
     decode_responses=False
 )
 
-def get_cached_signals():
-    """Get cached momentum signals"""
+def calculate_momentum_score(prices: pd.Series) -> float:
+    """
+    Calculate momentum score based on multiple timeframes
+    """
     try:
-        # Generate sample signals for demonstration
-        signals = {}
-        for ticker in RELIABLE_TICKERS:
-            momentum_score = np.random.normal(0, 0.5)  # Random score for demo
-            price = np.random.uniform(100, 300)  # Random price for demo
-            change = np.random.uniform(-3, 3)  # Random price change for demo
-            
-            signals[ticker] = {
-                'momentum_score': momentum_score,
-                'current_price': price,
-                'signal': 'BUY' if momentum_score > 0.1 else 'SELL' if momentum_score < -0.1 else 'HOLD',
-                'change': f"{'+' if change > 0 else ''}{change:.1f}%"
-            }
-        return signals
+        # Calculate returns for different timeframes
+        returns_1d = prices.pct_change(1).fillna(0)
+        returns_5d = prices.pct_change(5).fillna(0)
+        returns_20d = prices.pct_change(20).fillna(0)
+        
+        # Calculate momentum indicators
+        rsi = calculate_rsi(prices)
+        macd = calculate_macd(prices)
+        
+        # Combine signals into a momentum score
+        momentum_score = (
+            0.3 * returns_1d.iloc[-1] +  # 30% weight to daily return
+            0.3 * returns_5d.iloc[-1] +   # 30% weight to weekly return
+            0.2 * returns_20d.iloc[-1] +  # 20% weight to monthly return
+            0.1 * (rsi - 50) / 50 +       # 10% weight to RSI
+            0.1 * macd                     # 10% weight to MACD
+        )
+        
+        # Normalize score between -1 and 1
+        return np.clip(momentum_score, -1, 1)
+    except Exception as e:
+        logger.error(f"Error calculating momentum score: {str(e)}")
+        return 0.0
+
+def calculate_rsi(prices: pd.Series, periods: int = 14) -> float:
+    """Calculate RSI indicator"""
+    try:
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=periods).mean()
+        
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi.iloc[-1]
+    except Exception as e:
+        logger.error(f"Error calculating RSI: {str(e)}")
+        return 50.0
+
+def calculate_macd(prices: pd.Series) -> float:
+    """Calculate MACD indicator"""
+    try:
+        exp1 = prices.ewm(span=12, adjust=False).mean()
+        exp2 = prices.ewm(span=26, adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=9, adjust=False).mean()
+        return (macd.iloc[-1] - signal.iloc[-1]) / prices.iloc[-1]
+    except Exception as e:
+        logger.error(f"Error calculating MACD: {str(e)}")
+        return 0.0
+
+def get_historical_data(ticker: str) -> Optional[pd.DataFrame]:
+    """Get historical price data for a ticker"""
+    try:
+        stock = yf.Ticker(ticker)
+        data = stock.history(period='1mo', interval='1d')
+        if not data.empty:
+            return data
+    except Exception as e:
+        logger.error(f"Error fetching data for {ticker}: {str(e)}")
+    return None
+
+def determine_signal(momentum_score: float) -> str:
+    """Determine trading signal based on momentum score"""
+    if momentum_score >= 0.3:
+        return 'BUY'
+    elif momentum_score <= -0.3:
+        return 'SELL'
+    else:
+        return 'HOLD'
+
+def get_cached_signals() -> Optional[Dict]:
+    """Get cached signals from Redis"""
+    try:
+        signals = redis_client.get('momentum_signals')
+        if signals:
+            return json.loads(signals)
     except Exception as e:
         logger.error(f"Error getting cached signals: {str(e)}")
-        return None
+    return None
 
-def save_signals_to_cache(signals: List[Dict]) -> None:
-    """Save momentum signals to cache."""
+def cache_signals(signals: Dict):
+    """Cache signals to Redis"""
     try:
-        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-        redis_client = redis.from_url(redis_url, ssl_cert_reqs=None, decode_responses=True)
-        redis_client.setex(CACHE_KEY, CACHE_EXPIRY, str(signals))
+        redis_client.set('momentum_signals', json.dumps(signals))
+        redis_client.expire('momentum_signals', 300)  # Expire after 5 minutes
     except Exception as e:
-        logger.error(f"Error saving signals to cache: {e}")
+        logger.error(f"Error caching signals: {str(e)}")
 
 def process_batch(tickers: List[str]) -> Dict[str, Dict]:
     """Process a batch of tickers and calculate their momentum scores."""
@@ -117,7 +184,7 @@ def process_batch(tickers: List[str]) -> Dict[str, Dict]:
                 continue
             
             # Calculate momentum score
-            momentum_score = calculate_momentum_score(data)
+            momentum_score = calculate_momentum_score(data['Close'])
             
             # Get current price and calculate price change
             current_price = float(data['Close'].iloc[-1])
@@ -128,7 +195,7 @@ def process_batch(tickers: List[str]) -> Dict[str, Dict]:
                 'momentum_score': momentum_score,
                 'current_price': current_price,
                 'price_change': price_change,
-                'signal': 'BUY' if momentum_score > 0.1 else 'SELL' if momentum_score < -0.1 else 'HOLD'
+                'signal': determine_signal(momentum_score)
             }
             
             logger.info(f"Processed {ticker}: Score={momentum_score:.2f}, Signal={results[ticker]['signal']}")
@@ -179,13 +246,63 @@ def update_signals(tickers: List[str]):
         logging.error(f"Error updating signals: {str(e)}")
 
 def run_strategy(tickers: List[str]) -> Dict[str, Dict]:
-    """Run the momentum strategy on the given tickers."""
+    """
+    Run momentum strategy and generate trading signals
+    """
+    signals = {}
+    
     try:
-        # For demonstration, return cached signals
-        return get_cached_signals()
+        # Check cache first
+        cached_signals = get_cached_signals()
+        if cached_signals:
+            # Only use cache if less than 5 minutes old
+            cache_time = cached_signals.get('timestamp')
+            if cache_time and (datetime.now() - datetime.fromisoformat(cache_time)).seconds < 300:
+                return cached_signals
+        
+        for ticker in tickers:
+            try:
+                # Get historical data
+                data = get_historical_data(ticker)
+                if data is None or data.empty:
+                    continue
+                
+                # Calculate momentum score
+                momentum_score = calculate_momentum_score(data['Close'])
+                
+                # Get current price and daily change
+                current_price = data['Close'].iloc[-1]
+                prev_price = data['Close'].iloc[-2]
+                daily_change = ((current_price - prev_price) / prev_price) * 100
+                
+                # Determine trading signal
+                signal = determine_signal(momentum_score)
+                
+                signals[ticker] = {
+                    'momentum_score': round(momentum_score, 2),
+                    'signal': signal,
+                    'price': round(current_price, 2),
+                    'change': round(daily_change, 1)
+                }
+                
+                logger.info(f"Generated signal for {ticker}: {signal} (score: {momentum_score:.2f})")
+                
+            except Exception as e:
+                logger.error(f"Error processing {ticker}: {str(e)}")
+                continue
+        
+        # Cache the signals with timestamp
+        signals_with_timestamp = {
+            'timestamp': datetime.now().isoformat(),
+            'signals': signals
+        }
+        cache_signals(signals_with_timestamp)
+        
+        return signals
+        
     except Exception as e:
         logger.error(f"Error running strategy: {str(e)}")
-        return None
+        return {}
 
 def get_cached_data(ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """Get data from cache if available and not expired."""
