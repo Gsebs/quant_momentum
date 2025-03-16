@@ -35,6 +35,7 @@ import json
 from urllib3.exceptions import MaxRetryError
 from requests.exceptions import RequestException
 from functools import wraps
+import requests_cache
 
 # Custom error classes
 class RetryableError(Exception):
@@ -77,6 +78,14 @@ HEADERS = {
 # Initialize Redis client with SSL verification disabled
 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
 redis_client = redis.from_url(redis_url, ssl_cert_reqs=None)
+
+# Initialize the cache with a 1-hour expiration
+session = requests_cache.CachedSession(
+    'yfinance.cache',
+    backend='sqlite',
+    expire_after=timedelta(hours=1)
+)
+yf.pdr_override()
 
 def get_sp500_tickers() -> List[str]:
     """Get list of S&P 500 tickers."""
@@ -437,8 +446,7 @@ def redis_cache(expire_time=300):
 
 def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]:
     """
-    Get stock data for a given ticker using yfinance.
-    Implements rate limiting and exponential backoff for API requests.
+    Get stock data for a given ticker using yfinance with caching.
     
     Args:
         ticker (str): The stock ticker symbol
@@ -447,40 +455,43 @@ def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]
         Optional[Dict]: Dictionary containing stock data and metrics, or None if data retrieval fails
     """
     max_retries = 3
-    base_delay = 2  # Base delay in seconds
+    base_delay = 5  # Increased base delay
     
     for attempt in range(max_retries):
         try:
-            # Add delay with exponential backoff
             if attempt > 0:
                 delay = base_delay * (2 ** (attempt - 1))
                 logging.info(f"Retrying {ticker} after {delay} seconds (attempt {attempt + 1}/{max_retries})")
                 time.sleep(delay)
             
-            stock = yf.Ticker(ticker)
+            # Create Ticker object with our cached session
+            stock = yf.Ticker(ticker, session=session)
             
-            # First try to get basic info to verify the ticker exists
+            # Get basic info first
             try:
                 info = stock.info
                 if not info:
                     logging.warning(f"No info available for {ticker}")
                     return None
             except Exception as e:
-                if "429" in str(e):  # Rate limit error
-                    raise  # Re-raise to trigger retry
+                if "429" in str(e):
+                    raise
                 logging.error(f"Error getting info for {ticker}: {str(e)}")
                 return None
             
-            # Add delay before historical data request
-            time.sleep(1)
-            
-            # Get historical data
-            data = stock.history(period="1y", interval="1d")
+            # Get historical data with the cached session
+            data = stock.history(
+                period="1y",
+                interval="1d",
+                auto_adjust=True,
+                actions=False,
+                session=session
+            )
             
             if data.empty:
                 logging.warning(f"No historical data available for {ticker}")
                 return None
-                
+            
             required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
             missing_columns = [col for col in required_columns if col not in data.columns]
             if missing_columns:
@@ -492,6 +503,7 @@ def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]
             avg_volume = data['Volume'].mean()
             price_change = ((current_price - data['Close'].iloc[0]) / data['Close'].iloc[0]) * 100
             
+            logging.info(f"Successfully fetched data for {ticker}")
             return {
                 'data': data,
                 'current_price': current_price,
@@ -500,13 +512,13 @@ def get_stock_data(ticker: str) -> Optional[Dict[str, Union[pd.DataFrame, Any]]]
             }
             
         except Exception as e:
-            if attempt == max_retries - 1:  # Last attempt
+            if attempt == max_retries - 1:
                 logging.error(f"Failed to get data for {ticker} after {max_retries} attempts: {str(e)}")
                 return None
-            if "429" not in str(e):  # If not a rate limit error, don't retry
+            if "429" not in str(e):
                 logging.error(f"Error getting data for {ticker}: {str(e)}")
                 return None
-            continue  # Retry on rate limit error
+            continue
     
     return None
 

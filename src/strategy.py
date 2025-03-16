@@ -98,7 +98,7 @@ def save_signals_to_cache(signals: List[Dict]) -> None:
 def process_batch(tickers: List[str]) -> Dict[str, Dict[str, float]]:
     """
     Process a batch of tickers and calculate their momentum scores.
-    Includes delays between processing individual tickers to avoid rate limiting.
+    Uses cached data when available to avoid rate limiting.
     
     Args:
         tickers (List[str]): List of stock tickers to process
@@ -110,14 +110,12 @@ def process_batch(tickers: List[str]) -> Dict[str, Dict[str, float]]:
     
     for ticker in tickers:
         try:
-            # Add delay between processing each ticker
-            time.sleep(2)
-            
+            # Get data with caching
             data = get_stock_data(ticker)
             if not data:
                 logging.warning(f"No data available for {ticker}, skipping")
                 continue
-                
+            
             df = data['data']
             
             # Calculate momentum score
@@ -131,6 +129,7 @@ def process_batch(tickers: List[str]) -> Dict[str, Dict[str, float]]:
                     'avg_volume': data['avg_volume'],
                     'price_change': data['price_change']
                 }
+                logging.info(f"Successfully processed {ticker}")
             else:
                 logging.warning(f"Could not calculate momentum score for {ticker}")
                 
@@ -142,7 +141,7 @@ def process_batch(tickers: List[str]) -> Dict[str, Dict[str, float]]:
 
 def update_signals(tickers: List[str]) -> None:
     """
-    Update momentum signals for all tickers with proper rate limiting.
+    Update momentum signals for all tickers with caching support.
     
     Args:
         tickers (List[str]): List of stock tickers to process
@@ -153,9 +152,9 @@ def update_signals(tickers: List[str]) -> None:
         
     logging.info(f"Starting signal update for {len(tickers)} tickers")
     all_results = {}
-    batch_size = 5  # Reduced batch size
+    batch_size = 10  # Increased batch size since we're using caching
     
-    # Process tickers in smaller batches with longer delays
+    # Process tickers in batches
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i + batch_size]
         logging.info(f"Processing batch {i//batch_size + 1}/{(len(tickers) + batch_size - 1)//batch_size}")
@@ -164,9 +163,9 @@ def update_signals(tickers: List[str]) -> None:
             batch_results = process_batch(batch)
             all_results.update(batch_results)
             
-            # Add longer delay between batches
+            # Add a small delay between batches to be safe
             if i + batch_size < len(tickers):
-                delay = 60  # 60 second delay between batches
+                delay = 10  # Reduced delay since we're using caching
                 logging.info(f"Waiting {delay} seconds before next batch")
                 time.sleep(delay)
                 
