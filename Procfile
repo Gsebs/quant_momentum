@@ -1,1 +1,1 @@
-web: pip install -e . && FLASK_APP=wsgi.py FLASK_ENV=production PYTHONPATH=$PYTHONPATH:. gunicorn wsgi:app --log-file=- --log-level=debug --timeout=120 --workers=2 --worker-class=gthread --threads=4 --preload 
+web: pip install -e . && FLASK_APP=wsgi.py FLASK_ENV=production PYTHONPATH=$PYTHONPATH:. gunicorn wsgi:app --log-file=- --log-level=debug --timeout=120 --workers=2 --worker-class=gthread --threads=4 

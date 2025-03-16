@@ -13,14 +13,26 @@ import random
 import numpy as np
 import traceback
 import json
+from redis.retry import Retry
+from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError, TimeoutError
 
-# Configure logging
+# Configure logging with more detailed format
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
     stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
+
+# Add error handler
+def handle_error(error):
+    logger.error(f"Application error: {str(error)}\n{traceback.format_exc()}")
+    return format_api_response(
+        status='error',
+        message=f"An error occurred: {str(error)}",
+        code=500
+    )
 
 # Add the project root directory to Python path
 project_root = os.path.dirname(os.path.abspath(__file__))
@@ -40,6 +52,9 @@ app = Flask(__name__,
     template_folder='templates'
 )
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# Register error handler
+app.register_error_handler(Exception, handle_error)
 
 # Configure Redis
 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
@@ -149,7 +164,11 @@ def before_first_request():
 @limiter.exempt
 def home():
     """Render dashboard page"""
-    return render_template('dashboard.html')
+    try:
+        return render_template('dashboard.html')
+    except Exception as e:
+        logger.error(f"Error rendering dashboard: {str(e)}\n{traceback.format_exc()}")
+        return render_template('error.html', error=str(e)), 500
 
 @app.route('/api/momentum-signals', methods=['GET'])
 @limiter.exempt
