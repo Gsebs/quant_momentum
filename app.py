@@ -123,20 +123,56 @@ def get_momentum_signals():
 def get_performance():
     try:
         report_file = 'data/reports/momentum_report.xlsx'
-        if not os.path.exists(report_file):
+        signals_file = 'data/momentum_signals.xlsx'
+        
+        if not os.path.exists(report_file) or not os.path.exists(signals_file):
             initialize_data()
-            if not os.path.exists(report_file):
+            if not os.path.exists(report_file) or not os.path.exists(signals_file):
                 return jsonify({
-                    'error': 'Performance report not available',
-                    'message': 'Report is being generated'
+                    'error': 'Performance data not available',
+                    'message': 'Data is being generated'
                 }), 404
-            
-        df = pd.read_excel(report_file)
-        performance = df.to_dict(orient='records')
+
+        # Read performance data from Excel files
+        report_data = pd.read_excel(report_file, sheet_name=None)  # Read all sheets
+        signals_data = pd.read_excel(signals_file)
+        
+        # Convert DataFrame to dict for each sheet
+        performance_data = {
+            'overview': report_data['Overview'].to_dict(orient='records'),
+            'returns': report_data['Returns'].to_dict(orient='records'),
+            'risk_metrics': report_data['Risk Metrics'].to_dict(orient='records'),
+            'technical': report_data['Technical Indicators'].to_dict(orient='records'),
+            'signals': signals_data.to_dict(orient='records')
+        }
+        
+        # Calculate portfolio statistics
+        latest_data = signals_data.iloc[-1] if not signals_data.empty else {}
+        portfolio_stats = {
+            'portfolio_value': float(latest_data.get('Last_Price', 0) * 100),  # Assuming $100 per position
+            'daily_return': float(latest_data.get('1m_return', 0)),
+            'sharpe_ratio': float(latest_data.get('risk_sharpe_ratio', 0)),
+            'max_drawdown': float(latest_data.get('risk_max_drawdown', 0)),
+        }
+        
+        # Get recent trades (last 10 trades)
+        recent_trades = []
+        for _, row in signals_data.iterrows():
+            if row.get('position_size', 0) > 0:
+                recent_trades.append({
+                    'date': datetime.now().isoformat(),
+                    'ticker': row.get('Ticker', ''),
+                    'type': 'BUY' if row.get('momentum_score', 0) > 0 else 'SELL',
+                    'price': float(row.get('Last_Price', 0)),
+                    'quantity': int(row.get('position_size', 0) / float(row.get('Last_Price', 1)))
+                })
+        recent_trades = recent_trades[-10:]  # Get last 10 trades
         
         return jsonify({
             'status': 'success',
-            'performance': performance,
+            'data': performance_data,
+            'portfolio_stats': portfolio_stats,
+            'recent_trades': recent_trades,
             'cached': True,
             'generated_at': datetime.now().isoformat()
         })

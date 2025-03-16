@@ -5,6 +5,12 @@ body {
 
 .navbar {
     box-shadow: 0 2px 4px rgba(0,0,0,.1);
+    background: linear-gradient(135deg, #1a237e 0%, #0d47a1 100%) !important;
+}
+
+.navbar-brand {
+    font-weight: 600;
+    letter-spacing: 0.5px;
 }
 
 .card {
@@ -12,6 +18,11 @@ body {
     border-radius: 10px;
     box-shadow: 0 0 20px rgba(0,0,0,.05);
     margin-bottom: 20px;
+    transition: transform 0.2s ease-in-out;
+}
+
+.card:hover {
+    transform: translateY(-2px);
 }
 
 .card-header {
@@ -38,6 +49,7 @@ table {
 th {
     font-weight: 600;
     color: #666;
+    border-bottom: 2px solid #f0f0f0;
 }
 
 .table > :not(caption) > * > * {
@@ -46,22 +58,28 @@ th {
 
 .positive {
     color: #28a745;
+    font-weight: 500;
 }
 
 .negative {
     color: #dc3545;
+    font-weight: 500;
 }
 
 #portfolioValue, #dailyReturn, #sharpeRatio, #maxDrawdown {
     font-weight: 600;
     margin: 0;
     color: #333;
+    font-size: 1.5rem;
+    animation: fadeIn 0.5s ease-in-out;
 }
 
 h6 {
     color: #666;
     font-size: 0.875rem;
     margin-bottom: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .table-hover tbody tr:hover {
@@ -70,11 +88,75 @@ h6 {
 }
 
 #last-update {
-    color: #adb5bd;
+    color: rgba(255,255,255,0.8);
     font-size: 0.875rem;
 }
 
 canvas {
     width: 100% !important;
     height: 300px !important;
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.table tbody tr {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Value changes animation */
+.flash {
+    animation: flash 0.5s ease-in-out;
+}
+
+@keyframes flash {
+    0% {
+        background-color: rgba(40, 167, 69, 0.2);
+    }
+    100% {
+        background-color: transparent;
+    }
+}
+
+/* Portfolio stats cards */
+.stats-card {
+    padding: 1rem;
+    border-radius: 8px;
+    background: #fff;
+    margin-bottom: 1rem;
+}
+
+.stats-card h6 {
+    margin-bottom: 0.25rem;
+}
+
+.stats-card h3 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+/* Responsive table */
+@media (max-width: 768px) {
+    .table-responsive {
+        margin: 0;
+        padding: 0;
+    }
+    
+    .card-body {
+        padding: 1rem;
+    }
+    
+    #portfolioValue, #dailyReturn, #sharpeRatio, #maxDrawdown {
+        font-size: 1.25rem;
+    }
 } 
