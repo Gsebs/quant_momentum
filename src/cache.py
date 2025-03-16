@@ -16,7 +16,7 @@ REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
 redis_client = redis.from_url(
     REDIS_URL,
     ssl_cert_reqs=None,  # Disable SSL certificate verification
-    decode_responses=True  # Decode responses to UTF-8 strings
+    decode_responses=False  # Don't decode responses to UTF-8 strings
 )
 
 # Initialize requests-cache for Yahoo Finance API calls
