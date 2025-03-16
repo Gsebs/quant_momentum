@@ -446,7 +446,7 @@ def redis_cache(expire_time=300):
 
 def get_stock_data(ticker: str) -> Optional[Dict]:
     """
-    Get stock data for a given ticker using Redis caching and specific date range.
+    Get stock data for a given ticker using Redis caching and direct API requests.
     
     Args:
         ticker (str): The stock ticker symbol
@@ -463,75 +463,91 @@ def get_stock_data(ticker: str) -> Optional[Dict]:
             return pickle.loads(cached_data)
             
         # Calculate date range (1 year ago to today)
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=365)
+        end_date = int(datetime.now().timestamp())
+        start_date = int((datetime.now() - timedelta(days=365)).timestamp())
         
         # Implement exponential backoff with jitter for data retrieval
         max_retries = 5
         base_delay = 1
         max_delay = 32
         
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_date}&period2={end_date}&interval=1d"
+        
         for attempt in range(max_retries):
             try:
-                # Get historical data using download function with specific dates
-                df = yf.download(
-                    ticker,
-                    start=start_date.strftime('%Y-%m-%d'),
-                    end=end_date.strftime('%Y-%m-%d'),
-                    interval="1d",
-                    progress=False,
-                    show_errors=False,
-                    timeout=10
-                )
+                response = requests.get(url, headers=headers, timeout=10)
+                response.raise_for_status()
+                data = response.json()
                 
-                if df.empty:
+                if 'chart' not in data or 'result' not in data['chart'] or not data['chart']['result']:
                     if attempt == max_retries - 1:
                         logging.warning(f"No historical data available for {ticker}")
                         return None
-                else:
-                    break
-                    
+                    continue
+                
+                result = data['chart']['result'][0]
+                timestamps = result['timestamp']
+                quote = result['indicators']['quote'][0]
+                
+                # Create DataFrame
+                df = pd.DataFrame({
+                    'Open': quote.get('open', []),
+                    'High': quote.get('high', []),
+                    'Low': quote.get('low', []),
+                    'Close': quote.get('close', []),
+                    'Volume': quote.get('volume', [])
+                }, index=pd.to_datetime(timestamps, unit='s'))
+                
+                # Remove any rows with NaN values
+                df = df.dropna()
+                
+                if df.empty:
+                    if attempt == max_retries - 1:
+                        logging.warning(f"No valid data available for {ticker}")
+                        return None
+                    continue
+                
+                # Calculate metrics
+                current_price = df['Close'].iloc[-1]
+                avg_volume = df['Volume'].mean()
+                price_change = (current_price - df['Close'].iloc[0]) / df['Close'].iloc[0]
+                
+                result = {
+                    'data': df,
+                    'current_price': current_price,
+                    'avg_volume': avg_volume,
+                    'price_change': price_change
+                }
+                
+                # Cache the result for 1 hour
+                try:
+                    redis_client.setex(
+                        cache_key,
+                        3600,  # 1 hour in seconds
+                        pickle.dumps(result)
+                    )
+                except Exception as e:
+                    logging.error(f"Failed to cache data for {ticker}: {str(e)}")
+                
+                return result
+                
             except Exception as e:
                 if attempt == max_retries - 1:
-                    logging.error(f"Failed to get historical data for {ticker} after {max_retries} attempts: {str(e)}")
+                    logging.error(f"Failed to get data for {ticker} after {max_retries} attempts: {str(e)}")
                     return None
                     
                 delay = min(max_delay, base_delay * (2 ** attempt))
                 jitter = random.uniform(0, 0.1 * delay)
                 total_delay = delay + jitter
                 
-                logging.info(f"Retrying {ticker} historical data after {total_delay:.2f} seconds (attempt {attempt + 1}/{max_retries})")
+                logging.info(f"Retrying {ticker} after {total_delay:.2f} seconds (attempt {attempt + 1}/{max_retries})")
                 time.sleep(total_delay)
         
-        # Verify required columns exist
-        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-        if not all(col in df.columns for col in required_columns):
-            logging.error(f"Missing required columns for {ticker}")
-            return None
-            
-        # Calculate metrics
-        current_price = df['Close'].iloc[-1]
-        avg_volume = df['Volume'].mean()
-        price_change = (current_price - df['Close'].iloc[0]) / df['Close'].iloc[0]
-        
-        result = {
-            'data': df,
-            'current_price': current_price,
-            'avg_volume': avg_volume,
-            'price_change': price_change
-        }
-        
-        # Cache the result for 1 hour
-        try:
-            redis_client.setex(
-                cache_key,
-                3600,  # 1 hour in seconds
-                pickle.dumps(result)
-            )
-        except Exception as e:
-            logging.error(f"Failed to cache data for {ticker}: {str(e)}")
-        
-        return result
+        return None
         
     except Exception as e:
         logging.error(f"Error getting data for {ticker}: {str(e)}")
