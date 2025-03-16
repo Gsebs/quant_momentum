@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 
 # Configure Redis with better connection handling
 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-redis_retry = Retry(ExponentialBackoff(), 3)
+redis_retry = Retry(
+    ExponentialBackoff(cap=0.5, base=0.2),  # cap=0.5s, base=0.2s
+    3  # max retries
+)
 
 redis_client = redis.from_url(
     redis_url,
