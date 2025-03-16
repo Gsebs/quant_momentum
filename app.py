@@ -6,7 +6,18 @@ from flask import Flask, jsonify, send_file, send_from_directory, render_templat
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from src import run_strategy, get_cached_signals, RELIABLE_TICKERS, clear_cache
+
+# Add the project root directory to Python path
+project_root = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, project_root)
+
+try:
+    from src.strategy import run_strategy, get_cached_signals, RELIABLE_TICKERS
+    from src.cache import clear_cache
+except ImportError as e:
+    print(f"Error importing modules: {e}")
+    sys.exit(1)
+
 from datetime import datetime, timedelta
 import redis
 import threading
