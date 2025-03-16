@@ -446,7 +446,7 @@ def redis_cache(expire_time=300):
 
 def get_stock_data(ticker: str) -> Optional[Dict]:
     """
-    Get stock data for a given ticker using Redis caching and exponential backoff retries.
+    Get stock data for a given ticker using Redis caching and yfinance.download.
     
     Args:
         ticker (str): The stock ticker symbol
@@ -462,41 +462,30 @@ def get_stock_data(ticker: str) -> Optional[Dict]:
         if cached_data:
             return pickle.loads(cached_data)
             
-        # Create Ticker object
-        stock = yf.Ticker(ticker)
-        
-        # Implement exponential backoff with jitter for info retrieval
+        # Implement exponential backoff with jitter for data retrieval
         max_retries = 5
         base_delay = 1
         max_delay = 32
         
         for attempt in range(max_retries):
             try:
-                # Get basic info to verify the symbol exists
-                info = stock.info
-                break
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    logging.error(f"Failed to get info for {ticker} after {max_retries} attempts: {str(e)}")
-                    return None
-                    
-                # Calculate delay with exponential backoff and jitter
-                delay = min(max_delay, base_delay * (2 ** attempt))
-                jitter = random.uniform(0, 0.1 * delay)  # 10% jitter
-                total_delay = delay + jitter
+                # Get historical data using download function
+                df = yf.download(
+                    ticker,
+                    period="1y",
+                    interval="1d",
+                    progress=False,
+                    show_errors=False,
+                    timeout=10
+                )
                 
-                logging.info(f"Retrying {ticker} info after {total_delay:.2f} seconds (attempt {attempt + 1}/{max_retries})")
-                time.sleep(total_delay)
-        
-        # Implement exponential backoff with jitter for historical data
-        for attempt in range(max_retries):
-            try:
-                # Get historical data
-                df = stock.history(period="1y", interval="1d")
                 if df.empty:
-                    logging.warning(f"No historical data available for {ticker}")
-                    return None
-                break
+                    if attempt == max_retries - 1:
+                        logging.warning(f"No historical data available for {ticker}")
+                        return None
+                else:
+                    break
+                    
             except Exception as e:
                 if attempt == max_retries - 1:
                     logging.error(f"Failed to get historical data for {ticker} after {max_retries} attempts: {str(e)}")
