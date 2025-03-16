@@ -72,7 +72,7 @@ REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
 redis_client = redis.from_url(
     REDIS_URL,
     ssl_cert_reqs=None,
-    decode_responses=True
+    decode_responses=False
 )
 
 def get_cached_signals() -> Optional[List[Dict]]:
@@ -80,7 +80,7 @@ def get_cached_signals() -> Optional[List[Dict]]:
     try:
         cached = redis_client.get('momentum_signals')
         if cached:
-            return pickle.loads(cached.encode('latin1'))
+            return pickle.loads(cached)
         return None
     except Exception as e:
         logger.error(f"Error getting cached signals: {e}")
