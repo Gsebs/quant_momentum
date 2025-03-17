@@ -127,21 +127,43 @@ def get_historical_data(ticker: str) -> Optional[pd.DataFrame]:
     """Get historical price data for a ticker"""
     try:
         stock = yf.Ticker(ticker)
-        # Try to get data with retries
-        for attempt in range(3):
-            try:
-                data = stock.history(period='1mo', interval='1d')
-                if not data.empty and len(data) > 0:
-                    return data
-                logger.warning(f"Empty data received for {ticker}, attempt {attempt + 1}")
-                time.sleep(1)  # Wait before retry
-            except Exception as e:
-                if attempt == 2:  # Last attempt
-                    raise
-                logger.warning(f"Error fetching data for {ticker}, attempt {attempt + 1}: {str(e)}")
-                time.sleep(1)  # Wait before retry
-                
-        logger.error(f"Failed to get valid data for {ticker} after 3 attempts")
+        # Try to get data with retries and different periods
+        periods = ['1mo', '5d', '1d']  # Try different periods
+        
+        for period in periods:
+            for attempt in range(3):
+                try:
+                    data = stock.history(period=period)
+                    if not data.empty and len(data) > 0:
+                        logger.info(f"Successfully fetched {period} data for {ticker}")
+                        return data
+                    logger.warning(f"Empty data received for {ticker} with period {period}, attempt {attempt + 1}")
+                    time.sleep(1)  # Wait before retry
+                except Exception as e:
+                    if attempt == 2 and period == periods[-1]:  # Last attempt of last period
+                        raise
+                    logger.warning(f"Error fetching {period} data for {ticker}, attempt {attempt + 1}: {str(e)}")
+                    time.sleep(1)  # Wait before retry
+        
+        # If all attempts fail, try to get quote data as fallback
+        try:
+            info = stock.info
+            if info and 'regularMarketPrice' in info:
+                # Create a minimal DataFrame with just the current price
+                current_time = pd.Timestamp.now()
+                data = pd.DataFrame({
+                    'Open': [info['regularMarketPrice']],
+                    'High': [info['regularMarketPrice']],
+                    'Low': [info['regularMarketPrice']],
+                    'Close': [info['regularMarketPrice']],
+                    'Volume': [info.get('regularMarketVolume', 0)]
+                }, index=[current_time])
+                logger.info(f"Using quote data for {ticker} as fallback")
+                return data
+        except Exception as e:
+            logger.error(f"Failed to get quote data for {ticker}: {str(e)}")
+        
+        logger.error(f"Failed to get any valid data for {ticker}")
         return None
     except Exception as e:
         logger.error(f"Error fetching data for {ticker}: {str(e)}")
@@ -275,12 +297,14 @@ def run_strategy(tickers: List[str]) -> Dict[str, Dict]:
             if cache_time and (datetime.now() - datetime.fromisoformat(cache_time)).seconds < 300:
                 cached_data = cached_signals.get('signals', {})
                 if cached_data:  # Only return if we have actual signals
+                    logger.info(f"Using cached signals for {len(cached_data)} tickers")
                     return cached_data
         
         # Process tickers in smaller batches to avoid rate limits
-        batch_size = 3
+        batch_size = 2  # Reduced batch size
         for i in range(0, len(tickers), batch_size):
             batch = tickers[i:i+batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1} of {(len(tickers) + batch_size - 1)//batch_size}")
             
             for ticker in batch:
                 try:
@@ -291,12 +315,24 @@ def run_strategy(tickers: List[str]) -> Dict[str, Dict]:
                         continue
                     
                     # Calculate momentum score
-                    momentum_score = calculate_momentum_score(data['Close'])
+                    try:
+                        momentum_score = calculate_momentum_score(data['Close'])
+                    except Exception as e:
+                        logger.error(f"Error calculating momentum for {ticker}: {str(e)}")
+                        momentum_score = 0
                     
-                    # Get current price and daily change
-                    current_price = float(data['Close'].iloc[-1])
-                    prev_price = float(data['Close'].iloc[-2])
-                    daily_change = ((current_price - prev_price) / prev_price) * 100
+                    try:
+                        # Get current price and daily change
+                        current_price = float(data['Close'].iloc[-1])
+                        if len(data) > 1:
+                            prev_price = float(data['Close'].iloc[-2])
+                            daily_change = ((current_price - prev_price) / prev_price) * 100
+                        else:
+                            daily_change = 0
+                    except Exception as e:
+                        logger.error(f"Error calculating price change for {ticker}: {str(e)}")
+                        current_price = 0
+                        daily_change = 0
                     
                     # Determine trading signal
                     signal = determine_signal(momentum_score)
@@ -316,7 +352,7 @@ def run_strategy(tickers: List[str]) -> Dict[str, Dict]:
             
             # Add delay between batches to respect rate limits
             if i + batch_size < len(tickers):
-                time.sleep(2)
+                time.sleep(3)  # Increased delay
         
         if signals:  # Only cache if we have signals
             # Cache the signals with timestamp
