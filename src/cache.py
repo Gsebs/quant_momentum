@@ -11,31 +11,63 @@ from typing import Any, Dict, Optional
 from redis.retry import Retry
 from redis.backoff import ExponentialBackoff
 from redis.exceptions import ConnectionError, TimeoutError
+import urllib.parse
 
 logger = logging.getLogger(__name__)
 
 # Configure Redis with better connection handling and pooling
 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-redis_retry = Retry(
-    ExponentialBackoff(cap=1.0, base=0.5),  # Increased retry parameters
-    5  # Increased max retries
-)
+
+# Parse Redis URL to handle authentication properly
+def parse_redis_url(url):
+    try:
+        parsed = urllib.parse.urlparse(url)
+        return {
+            'host': parsed.hostname or 'localhost',
+            'port': int(parsed.port or 6379),
+            'username': parsed.username,
+            'password': parsed.password,
+            'db': int(parsed.path.lstrip('/') or 0)
+        }
+    except Exception as e:
+        logger.error(f"Error parsing Redis URL: {str(e)}")
+        return None
 
 def get_redis_client():
     try:
-        client = redis.from_url(
-            redis_url,
+        redis_config = parse_redis_url(redis_url)
+        if not redis_config:
+            logger.error("Failed to parse Redis URL")
+            return None
+
+        # Configure retry strategy
+        retry_strategy = Retry(
+            ExponentialBackoff(cap=1.0, base=0.5),
+            5
+        )
+
+        # Create Redis client with robust configuration
+        client = redis.Redis(
+            host=redis_config['host'],
+            port=redis_config['port'],
+            username=redis_config['username'],
+            password=redis_config['password'],
+            db=redis_config['db'],
+            ssl=redis_url.startswith('rediss://'),
             ssl_cert_reqs=None,
-            decode_responses=True,  # Always decode responses
+            decode_responses=True,
             socket_timeout=15,
             socket_connect_timeout=15,
+            socket_keepalive=True,
             retry_on_timeout=True,
-            retry=redis_retry,
+            retry=retry_strategy,
             max_connections=50,
             health_check_interval=15
         )
+
         # Test connection
         client.ping()
+        logger.info("Successfully connected to Redis")
         return client
     except (ConnectionError, TimeoutError) as e:
         logger.error(f"Failed to connect to Redis: {str(e)}")
@@ -44,6 +76,7 @@ def get_redis_client():
         logger.error(f"Unexpected error connecting to Redis: {str(e)}")
         return None
 
+# Initialize Redis client
 redis_client = get_redis_client()
 
 # Initialize requests-cache for Yahoo Finance API calls
@@ -106,6 +139,17 @@ def deserialize_value(value_str: str) -> Any:
         logger.error(f"Error deserializing value: {str(e)}")
         return None
 
+def get_redis():
+    """Get Redis client, attempting to reconnect if necessary"""
+    global redis_client
+    try:
+        if redis_client is None or not redis_client.ping():
+            redis_client = get_redis_client()
+        return redis_client
+    except Exception as e:
+        logger.error(f"Error getting Redis client: {str(e)}")
+        return None
+
 def cache_key(*args, **kwargs) -> str:
     """Generate a cache key from function arguments."""
     key_parts = [str(arg) for arg in args]
@@ -117,11 +161,16 @@ def redis_cache(expire_time: int = 3600):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
+            client = get_redis()
+            if client is None:
+                logger.warning(f"Redis unavailable, falling back to direct execution")
+                return func(*args, **kwargs)
+                
             key = f"{func.__name__}:{cache_key(*args, **kwargs)}"
             
             try:
                 # Try to get cached result
-                cached_result = redis_client.get(key)
+                cached_result = client.get(key)
                 if cached_result:
                     logger.info(f"Cache hit for {key}")
                     result = deserialize_value(cached_result)
@@ -135,7 +184,7 @@ def redis_cache(expire_time: int = 3600):
                 # Cache the result
                 try:
                     serialized_result = serialize_value(result)
-                    redis_client.setex(key, expire_time, serialized_result)
+                    client.setex(key, expire_time, serialized_result)
                     logger.info(f"Cache miss for {key}, stored new result")
                 except Exception as e:
                     logger.warning(f"Failed to cache result for {key}: {str(e)}")
@@ -148,7 +197,7 @@ def redis_cache(expire_time: int = 3600):
                 
             except Exception as e:
                 logger.error(f"Unexpected error in cache layer: {str(e)}")
-                raise
+                return func(*args, **kwargs)
                 
         return wrapper
     return decorator
@@ -156,10 +205,15 @@ def redis_cache(expire_time: int = 3600):
 def clear_cache():
     """Clear all cached data"""
     try:
-        redis_client.flushall()
-        requests_cache.clear()
-        logger.info("Cache cleared successfully")
-        return True
+        client = get_redis()
+        if client:
+            client.flushall()
+            requests_cache.clear()
+            logger.info("Cache cleared successfully")
+            return True
+        else:
+            logger.error("Redis client not available")
+            return False
     except Exception as e:
         logger.error(f"Error clearing cache: {str(e)}")
         return False 

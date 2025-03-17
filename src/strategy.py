@@ -44,7 +44,7 @@ import threading
 from queue import Queue
 import redis
 import json
-from .cache import redis_client
+from .cache import redis_client, get_redis
 
 # Just basic logging setup to see what's happening
 logging.basicConfig(level=logging.INFO)
@@ -146,11 +146,12 @@ def determine_signal(momentum_score: float) -> str:
 def get_cached_signals() -> Optional[Dict]:
     """Get cached signals from Redis"""
     try:
-        if redis_client is None:
+        client = get_redis()
+        if client is None:
             logger.error("Redis client not available")
             return None
             
-        signals = redis_client.get('momentum_signals')
+        signals = client.get('momentum_signals')
         if signals:
             return json.loads(signals)
     except Exception as e:
@@ -160,12 +161,13 @@ def get_cached_signals() -> Optional[Dict]:
 def cache_signals(signals: Dict):
     """Cache signals to Redis"""
     try:
-        if redis_client is None:
+        client = get_redis()
+        if client is None:
             logger.error("Redis client not available")
             return
             
-        redis_client.set('momentum_signals', json.dumps(signals))
-        redis_client.expire('momentum_signals', 300)  # Expire after 5 minutes
+        client.set('momentum_signals', json.dumps(signals))
+        client.expire('momentum_signals', 300)  # Expire after 5 minutes
     except Exception as e:
         logger.error(f"Error caching signals: {str(e)}")
 
@@ -258,7 +260,9 @@ def run_strategy(tickers: List[str]) -> Dict[str, Dict]:
             # Only use cache if less than 5 minutes old
             cache_time = cached_signals.get('timestamp')
             if cache_time and (datetime.now() - datetime.fromisoformat(cache_time)).seconds < 300:
-                return cached_signals.get('signals', {})
+                cached_data = cached_signals.get('signals', {})
+                if cached_data:  # Only return if we have actual signals
+                    return cached_data
         
         for ticker in tickers:
             try:
@@ -291,12 +295,13 @@ def run_strategy(tickers: List[str]) -> Dict[str, Dict]:
                 logger.error(f"Error processing {ticker}: {str(e)}")
                 continue
         
-        # Cache the signals with timestamp
-        signals_with_timestamp = {
-            'timestamp': datetime.now().isoformat(),
-            'signals': signals
-        }
-        cache_signals(signals_with_timestamp)
+        if signals:  # Only cache if we have signals
+            # Cache the signals with timestamp
+            signals_with_timestamp = {
+                'timestamp': datetime.now().isoformat(),
+                'signals': signals
+            }
+            cache_signals(signals_with_timestamp)
         
         return signals
         
