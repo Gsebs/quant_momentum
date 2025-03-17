@@ -12,6 +12,7 @@ from redis.retry import Retry
 from redis.backoff import ExponentialBackoff
 from redis.exceptions import ConnectionError, TimeoutError
 import urllib.parse
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -53,22 +54,30 @@ def get_redis_client():
             username=redis_config['username'],
             password=redis_config['password'],
             db=redis_config['db'],
-            ssl=redis_url.startswith('rediss://'),
-            ssl_cert_reqs=None,
+            ssl=True,  # Always use SSL for Heroku Redis
+            ssl_cert_reqs=None,  # Don't verify SSL cert
             decode_responses=True,
-            socket_timeout=15,
-            socket_connect_timeout=15,
+            socket_timeout=30,  # Increased timeouts
+            socket_connect_timeout=30,
             socket_keepalive=True,
             retry_on_timeout=True,
             retry=retry_strategy,
-            max_connections=50,
-            health_check_interval=15
+            max_connections=20,  # Reduced max connections
+            health_check_interval=30
         )
 
-        # Test connection
-        client.ping()
-        logger.info("Successfully connected to Redis")
-        return client
+        # Test connection with retry
+        for attempt in range(3):
+            try:
+                client.ping()
+                logger.info("Successfully connected to Redis")
+                return client
+            except redis.ConnectionError as e:
+                if attempt == 2:  # Last attempt
+                    raise
+                logger.warning(f"Redis connection attempt {attempt + 1} failed, retrying...")
+                time.sleep(1)  # Wait before retry
+                
     except (ConnectionError, TimeoutError) as e:
         logger.error(f"Failed to connect to Redis: {str(e)}")
         return None

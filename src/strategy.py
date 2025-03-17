@@ -127,12 +127,25 @@ def get_historical_data(ticker: str) -> Optional[pd.DataFrame]:
     """Get historical price data for a ticker"""
     try:
         stock = yf.Ticker(ticker)
-        data = stock.history(period='1mo', interval='1d')
-        if not data.empty:
-            return data
+        # Try to get data with retries
+        for attempt in range(3):
+            try:
+                data = stock.history(period='1mo', interval='1d')
+                if not data.empty and len(data) > 0:
+                    return data
+                logger.warning(f"Empty data received for {ticker}, attempt {attempt + 1}")
+                time.sleep(1)  # Wait before retry
+            except Exception as e:
+                if attempt == 2:  # Last attempt
+                    raise
+                logger.warning(f"Error fetching data for {ticker}, attempt {attempt + 1}: {str(e)}")
+                time.sleep(1)  # Wait before retry
+                
+        logger.error(f"Failed to get valid data for {ticker} after 3 attempts")
+        return None
     except Exception as e:
         logger.error(f"Error fetching data for {ticker}: {str(e)}")
-    return None
+        return None
 
 def determine_signal(momentum_score: float) -> str:
     """Determine trading signal based on momentum score"""
@@ -264,36 +277,46 @@ def run_strategy(tickers: List[str]) -> Dict[str, Dict]:
                 if cached_data:  # Only return if we have actual signals
                     return cached_data
         
-        for ticker in tickers:
-            try:
-                # Get historical data
-                data = get_historical_data(ticker)
-                if data is None or data.empty:
+        # Process tickers in smaller batches to avoid rate limits
+        batch_size = 3
+        for i in range(0, len(tickers), batch_size):
+            batch = tickers[i:i+batch_size]
+            
+            for ticker in batch:
+                try:
+                    # Get historical data
+                    data = get_historical_data(ticker)
+                    if data is None or data.empty:
+                        logger.warning(f"Skipping {ticker} due to missing data")
+                        continue
+                    
+                    # Calculate momentum score
+                    momentum_score = calculate_momentum_score(data['Close'])
+                    
+                    # Get current price and daily change
+                    current_price = float(data['Close'].iloc[-1])
+                    prev_price = float(data['Close'].iloc[-2])
+                    daily_change = ((current_price - prev_price) / prev_price) * 100
+                    
+                    # Determine trading signal
+                    signal = determine_signal(momentum_score)
+                    
+                    signals[ticker] = {
+                        'momentum_score': round(momentum_score, 2),
+                        'signal': signal,
+                        'price': round(current_price, 2),
+                        'change': round(daily_change, 1)
+                    }
+                    
+                    logger.info(f"Generated signal for {ticker}: {signal} (score: {momentum_score:.2f})")
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {ticker}: {str(e)}")
                     continue
-                
-                # Calculate momentum score
-                momentum_score = calculate_momentum_score(data['Close'])
-                
-                # Get current price and daily change
-                current_price = data['Close'].iloc[-1]
-                prev_price = data['Close'].iloc[-2]
-                daily_change = ((current_price - prev_price) / prev_price) * 100
-                
-                # Determine trading signal
-                signal = determine_signal(momentum_score)
-                
-                signals[ticker] = {
-                    'momentum_score': round(momentum_score, 2),
-                    'signal': signal,
-                    'price': round(current_price, 2),
-                    'change': round(daily_change, 1)
-                }
-                
-                logger.info(f"Generated signal for {ticker}: {signal} (score: {momentum_score:.2f})")
-                
-            except Exception as e:
-                logger.error(f"Error processing {ticker}: {str(e)}")
-                continue
+            
+            # Add delay between batches to respect rate limits
+            if i + batch_size < len(tickers):
+                time.sleep(2)
         
         if signals:  # Only cache if we have signals
             # Cache the signals with timestamp
@@ -302,6 +325,9 @@ def run_strategy(tickers: List[str]) -> Dict[str, Dict]:
                 'signals': signals
             }
             cache_signals(signals_with_timestamp)
+            logger.info(f"Cached signals for {len(signals)} tickers")
+        else:
+            logger.warning("No valid signals generated")
         
         return signals
         
