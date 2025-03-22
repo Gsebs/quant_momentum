@@ -270,81 +270,55 @@ async def main():
         raise
 
 # Store active WebSocket connections
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: Dict[str, Any]):
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except WebSocketDisconnect:
-                self.disconnect(connection)
-
-manager = ConnectionManager()
-market_data = MarketDataFeed()
-strategy = LatencyArbitrageStrategy()
-
-@app.on_event("startup")
-async def startup_event():
-    await market_data.initialize()
-    await strategy.initialize()
+active_connections: List[WebSocket] = []
 
 @app.get("/")
 async def root():
-    return {"status": "running", "timestamp": datetime.now().isoformat()}
-
-@app.get("/status")
-async def get_status():
-    return {
-        "market_data": market_data.get_status(),
-        "strategy": strategy.get_status(),
-        "connections": len(manager.active_connections)
-    }
+    """Root endpoint to check if the API is running"""
+    return {"status": "running", "message": "HFT Monitoring System API"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+    """WebSocket endpoint for real-time updates"""
+    await websocket.accept()
+    active_connections.append(websocket)
+    
     try:
         while True:
-            # Get latest data
-            market_update = market_data.get_latest_data()
-            strategy_update = strategy.get_latest_update()
-            
-            # Prepare message
-            message = {
+            # Simulate market data and trading activity
+            data = {
                 "timestamp": datetime.now().isoformat(),
-                "market_data": market_update,
-                "trades": strategy_update.get("trades", []),
-                "portfolio": strategy_update.get("portfolio", {}),
-                "metrics": {
-                    "total_profit": strategy_update.get("total_profit", 0),
-                    "win_rate": strategy_update.get("win_rate", 0),
-                    "sharpe_ratio": strategy_update.get("sharpe_ratio", 0),
-                    "max_drawdown": strategy_update.get("max_drawdown", 0),
-                    "volatility": strategy_update.get("volatility", 0),
-                    "success_rate": strategy_update.get("success_rate", 0),
-                    "avg_profit_per_trade": strategy_update.get("avg_profit_per_trade", 0),
-                    "total_trades": strategy_update.get("total_trades", 0),
-                    "avg_latency_ms": market_data.get_avg_latency()
-                }
+                "price": 50000 + np.random.normal(0, 10),
+                "volume": np.random.exponential(100),
+                "trades": [
+                    {
+                        "id": len(active_connections),
+                        "side": "BUY" if np.random.random() > 0.5 else "SELL",
+                        "price": 50000 + np.random.normal(0, 5),
+                        "size": np.random.exponential(0.1),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                ]
             }
             
-            await websocket.send_json(message)
-            await asyncio.sleep(0.1)  # 100ms update interval
+            await websocket.send_json(data)
+            await asyncio.sleep(1)  # Send updates every second
             
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        active_connections.remove(websocket)
     except Exception as e:
-        print(f"Error in websocket connection: {str(e)}")
-        manager.disconnect(websocket)
+        logger.error(f"WebSocket error: {str(e)}")
+        if websocket in active_connections:
+            active_connections.remove(websocket)
+
+@app.get("/status")
+async def get_status():
+    """Get current system status"""
+    return {
+        "status": "active",
+        "connections": len(active_connections),
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
