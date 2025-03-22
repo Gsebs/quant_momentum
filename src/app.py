@@ -4,16 +4,16 @@ from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from src.strategy import MomentumStrategy
-from src.cache import cache, init_cache
-from src.data import get_sp500_tickers
-from src.backtest import backtest_strategy
-from src.reporting import generate_report
-from src.risk import calculate_risk_metrics
-from src.hft_engine import HFTEngine
-from src.ml_model import MLPredictor
-from src.market_making import MarketMakingStrategy
-from src.market_data import MarketDataFeed
+from strategy import MomentumStrategy
+from cache import cache, init_cache
+from data import get_sp500_tickers
+from backtest import backtest_strategy
+from reporting import generate_report
+from risk import calculate_risk_metrics
+from hft_engine import HFTEngine
+from ml_model import MLPredictor
+from market_making import MarketMakingStrategy
+from market_data import MarketDataFeed
 import logging
 import os
 import redis
@@ -69,7 +69,7 @@ class GlobalState:
     @property
     def hft_engine(self):
         if self._hft_engine is None:
-            from src.hft_engine import HFTEngine
+            from hft_engine import HFTEngine
             self._hft_engine = HFTEngine({
                 'symbols': ['BTC/USD', 'ETH/USD'],
                 'initial_capital': 1000000,
@@ -83,14 +83,14 @@ class GlobalState:
     @property
     def ml_predictor(self):
         if self._ml_predictor is None:
-            from src.ml_model import MLPredictor
+            from ml_model import MLPredictor
             self._ml_predictor = MLPredictor()
         return self._ml_predictor
 
     @property
     def market_maker(self):
         if self._market_maker is None:
-            from src.market_making import MarketMakingStrategy
+            from market_making import MarketMakingStrategy
             self._market_maker = MarketMakingStrategy({
                 'base_spread': 0.001,
                 'min_spread': 0.0005,
@@ -105,7 +105,7 @@ class GlobalState:
     @property
     def market_data(self):
         if self._market_data is None:
-            from src.market_data import MarketDataFeed
+            from market_data import MarketDataFeed
             self._market_data = MarketDataFeed()
         return self._market_data
 
