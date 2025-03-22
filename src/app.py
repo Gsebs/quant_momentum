@@ -29,7 +29,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize Redis cache
-init_cache()
+redis_client = redis.Redis(
+    host=os.getenv('REDIS_HOST', 'localhost'),
+    port=int(os.getenv('REDIS_PORT', 6379)),
+    db=0
+)
 
 # Configure rate limiting
 limiter = Limiter(key_func=get_remote_address)
@@ -52,30 +56,58 @@ strategy = MomentumStrategy()
 class GlobalState:
     """Global state management for the application."""
     def __init__(self):
-        self.hft_engine = HFTEngine({
-            'symbols': ['BTC/USD', 'ETH/USD'],
-            'initial_capital': 1000000,
-            'position_limit': 100000,
-            'latency_threshold_ms': 10,
-            'base_order_size': 1.0,
-            'signal_interval': 1.0
-        })
-        self.ml_predictor = MLPredictor()
-        self.market_maker = MarketMakingStrategy({
-            'base_spread': 0.001,
-            'min_spread': 0.0005,
-            'max_spread': 0.002,
-            'inventory_limit': 100000,
-            'risk_limit': 1000000,
-            'quote_ttl': 60,
-            'symbols': ['BTC/USD', 'ETH/USD']
-        })
-        self.market_data = MarketDataFeed()
         self.active_connections: List[WebSocket] = []
         self.is_running = False
         self.last_update = datetime.now()
         self.metrics = {}
         self.alerts = []
+        self._hft_engine = None
+        self._ml_predictor = None
+        self._market_maker = None
+        self._market_data = None
+
+    @property
+    def hft_engine(self):
+        if self._hft_engine is None:
+            from src.hft_engine import HFTEngine
+            self._hft_engine = HFTEngine({
+                'symbols': ['BTC/USD', 'ETH/USD'],
+                'initial_capital': 1000000,
+                'position_limit': 100000,
+                'latency_threshold_ms': 10,
+                'base_order_size': 1.0,
+                'signal_interval': 1.0
+            })
+        return self._hft_engine
+
+    @property
+    def ml_predictor(self):
+        if self._ml_predictor is None:
+            from src.ml_model import MLPredictor
+            self._ml_predictor = MLPredictor()
+        return self._ml_predictor
+
+    @property
+    def market_maker(self):
+        if self._market_maker is None:
+            from src.market_making import MarketMakingStrategy
+            self._market_maker = MarketMakingStrategy({
+                'base_spread': 0.001,
+                'min_spread': 0.0005,
+                'max_spread': 0.002,
+                'inventory_limit': 100000,
+                'risk_limit': 1000000,
+                'quote_ttl': 60,
+                'symbols': ['BTC/USD', 'ETH/USD']
+            })
+        return self._market_maker
+
+    @property
+    def market_data(self):
+        if self._market_data is None:
+            from src.market_data import MarketDataFeed
+            self._market_data = MarketDataFeed()
+        return self._market_data
 
 state = GlobalState()
 
@@ -160,6 +192,11 @@ async def shutdown_event():
     await state.hft_engine.stop()
     await state.market_data.cleanup()
 
+@app.get("/")
+async def root():
+    """Root endpoint."""
+    return {"status": "ok", "message": "HFT Strategy API is running"}
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time updates."""
@@ -211,15 +248,6 @@ async def health_check():
 async def get_metrics(request: Request):
     """Get system metrics."""
     try:
-        # Handle the case where state.hft_engine might not be initialized
-        if not hasattr(state, 'hft_engine'):
-            return {
-                "system_metrics": {},
-                "ml_metrics": {},
-                "market_maker_metrics": {},
-                "market_data_metrics": {}
-            }
-            
         metrics = {}
         if hasattr(state.hft_engine, 'get_metrics'):
             engine_metrics = state.hft_engine.get_metrics()
