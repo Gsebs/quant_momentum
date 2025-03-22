@@ -35,8 +35,8 @@ import {
 } from '@chakra-ui/react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, AreaChart, Area } from 'recharts';
 
-const API_URL = 'http://localhost:8000';
-const WS_URL = 'ws://localhost:8000/ws';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const WS_URL = process.env.REACT_APP_WS_URL || 'ws://localhost:8000/ws';
 
 interface Trade {
   timestamp: string;
