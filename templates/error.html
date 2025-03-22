@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error - Quant Momentum Trading</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="row justify-content-center mt-5">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <h1 class="text-danger mb-4">Application Error</h1>
+                        <p class="lead">{{ error }}</p>
+                        <hr>
+                        <p class="text-muted">Please try refreshing the page or contact support if the problem persists.</p>
+                        <a href="/" class="btn btn-primary">Return to Dashboard</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html> 
