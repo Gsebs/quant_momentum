@@ -28,12 +28,17 @@ from typing import Dict, List, Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Redis cache
-redis_client = redis.Redis(
-    host=os.getenv('REDIS_HOST', 'localhost'),
-    port=int(os.getenv('REDIS_PORT', 6379)),
-    db=0
-)
+# Initialize Redis cache with error handling
+try:
+    redis_client = redis.Redis(
+        host=os.getenv('REDIS_HOST', 'localhost'),
+        port=int(os.getenv('REDIS_PORT', 6379)),
+        db=0
+    )
+    redis_client.ping()  # Test the connection
+except (redis.ConnectionError, redis.ResponseError) as e:
+    logger.warning(f"Failed to connect to Redis: {e}")
+    redis_client = None
 
 # Configure rate limiting
 limiter = Limiter(key_func=get_remote_address)
@@ -48,7 +53,7 @@ app.add_middleware(
     allow_origins=["*"],  # In production, replace with specific origins
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
 strategy = MomentumStrategy()
