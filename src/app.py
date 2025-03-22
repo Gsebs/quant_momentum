@@ -1,6 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import logging
 import os
 
@@ -11,7 +14,12 @@ logger = logging.getLogger(__name__)
 # Simple in-memory cache
 cache = {}
 
+# Configure rate limiting
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(title="HFT Strategy API")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Configure CORS for frontend access
 app.add_middleware(
@@ -33,6 +41,15 @@ async def health_check():
     return {
         "status": "healthy",
         "cache": "in-memory"
+    }
+
+@app.get("/api/metrics")
+@limiter.limit("1000/hour")
+async def get_metrics(request: Request):
+    """Get system metrics."""
+    return {
+        "status": "ok",
+        "cache_size": len(cache)
     }
 
 if __name__ == '__main__':
