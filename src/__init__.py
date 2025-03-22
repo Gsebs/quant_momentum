@@ -1,8 +1,4 @@
 """
-<<<<<<< HEAD
-Market Making Strategy Package
-""" 
-=======
 Quantitative HFT Algorithm Package
 """
 
@@ -21,5 +17,4 @@ from .ml_model import HFTModel, HFTFeatureEngine
 __version__ = '1.0.0'
 
 from .data import get_stock_data
-from .momentum import calculate_momentum_score 
->>>>>>> heroku/main
+from .momentum import calculate_momentum_score
