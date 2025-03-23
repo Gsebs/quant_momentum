@@ -3,7 +3,7 @@ import pandas as pd
 from typing import Dict, List
 import logging
 from datetime import datetime, timedelta
-from market_data_feed import get_latest_prices, get_price_history, RELIABLE_TICKERS
+from market_data_feed import get_latest_prices, get_price_history, reliable_tickers
 import asyncio
 
 # Configure logging
@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global variables to store strategy state
-last_signals: Dict[str, Dict] = {}
+cached_signals: Dict[str, Dict] = {}
 last_confidence: float = 0.0
 
 def calculate_momentum_score(prices: List[float], window: int = 20) -> float:
@@ -31,13 +31,13 @@ def calculate_momentum_score(prices: List[float], window: int = 20) -> float:
 
 def generate_signals() -> Dict[str, Dict]:
     """Generate trading signals based on momentum"""
-    global last_signals, last_confidence
+    global cached_signals, last_confidence
     
     try:
         signals = {}
         confidence_scores = []
         
-        for ticker in RELIABLE_TICKERS:
+        for ticker in reliable_tickers:
             price_history = get_price_history(ticker)
             if not price_history:
                 continue
@@ -70,7 +70,7 @@ def generate_signals() -> Dict[str, Dict]:
             }
         
         # Update global state
-        last_signals = signals
+        cached_signals = signals
         last_confidence = np.mean(confidence_scores) if confidence_scores else 0.0
         
         return signals
@@ -81,7 +81,7 @@ def generate_signals() -> Dict[str, Dict]:
 
 def get_cached_signals() -> Dict[str, Dict]:
     """Get the last cached signals"""
-    return last_signals
+    return cached_signals
 
 async def run_strategy():
     """Run the trading strategy"""
