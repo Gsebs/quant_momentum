@@ -1,36 +1,24 @@
 {
-  "name": "hft-monitor-frontend",
+  "name": "hft-arbitrage-dashboard",
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.0",
-    "@mui/icons-material": "^5.17.1",
-    "@mui/material": "^5.17.1",
     "@testing-library/jest-dom": "^5.17.0",
     "@testing-library/react": "^13.4.0",
-    "@types/jest": "^27.5.2",
-    "@types/node": "^16.18.82",
-    "@types/react": "^18.2.56",
-    "@types/react-dom": "^18.2.19",
-    "axios": "^1.8.4",
-    "chart.js": "^4.4.1",
+    "@testing-library/user-event": "^13.5.0",
+    "axios": "^1.6.2",
     "react": "^18.2.0",
-    "react-chartjs-2": "^5.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
-    "recharts": "^2.15.1",
-    "typescript": "^4.9.5",
+    "recharts": "^2.10.1",
+    "tailwindcss": "^3.3.5",
+    "@tailwindcss/forms": "^0.5.7",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:dev": "jest --watch --no-cache --verbose",
-    "test:coverage": "jest --coverage --watchAll=false",
-    "test:ci": "jest --ci --coverage --watchAll=false",
+    "build": "CI=false react-scripts build",
+    "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {
@@ -50,15 +38,5 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-  },
-  "devDependencies": {
-    "@babel/preset-env": "^7.26.9",
-    "@babel/preset-react": "^7.26.3",
-    "@testing-library/user-event": "^14.6.1",
-    "babel-jest": "^29.7.0",
-    "identity-obj-proxy": "^3.0.0",
-    "jest": "^29.7.0",
-    "jest-environment-jsdom": "^29.7.0",
-    "ts-jest": "^29.1.2"
   }
 }

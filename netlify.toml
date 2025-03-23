@@ -1,15 +1,15 @@
 # example netlify.toml
 [build]
-  command = "npm run build"
-  functions = "/Users/gerald/Desktop/quant_momentum/frontend/netlify/functions"
+  base = "frontend"
+  command = "npm install && npm run build"
   publish = "build"
 
   ## Uncomment to use this redirect for Single Page Applications like create-react-app.
   ## Not needed for static site generators.
-  #[[redirects]]
-  #  from = "/*"
-  #  to = "/index.html"
-  #  status = 200
+  [[redirects]]
+    from = "/*"
+    to = "/index.html"
+    status = 200
 
   ## (optional) Settings for Netlify Dev
   ## https://github.com/netlify/cli/blob/main/docs/netlify-dev.md#project-detection
@@ -19,3 +19,7 @@
   #  publish = "dist" # Folder with the static content for _redirect file
 
   ## more info on configuring this file: https://ntl.fyi/file-based-build-config
+
+[build.environment]
+  NODE_VERSION = "18"
+  CI = "false"
