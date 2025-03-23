@@ -1,10 +1,12 @@
 [build]
+  base = "frontend"
   command = "npm run build"
   publish = "build"
 
 [build.environment]
   NODE_VERSION = "18.16.0"
   CI = "true"
+  REACT_APP_API_URL = "https://quant-momentum-hft-clean-250df060b541.herokuapp.com"
 
 [[redirects]]
   from = "/*"
