@@ -4,82 +4,73 @@ from datetime import datetime, timedelta
 import pandas as pd
 import logging
 from typing import Dict, List
+import ccxt
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global variables to store market data
-latest_prices: Dict[str, float] = {}
-price_history: Dict[str, List[Dict]] = {}
-
-# List of reliable tickers to monitor
-RELIABLE_TICKERS = [
-    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META',
-    'NVDA', 'TSLA', 'JPM', 'V', 'WMT'
+market_data: Dict[str, Dict] = {}
+reliable_tickers = [
+    'BTC/USDT', 'ETH/USDT', 'BNB/USDT',  # Crypto pairs that trade 24/7
+    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META',  # Major tech stocks
+    'SPY', 'QQQ', 'VOO'  # ETFs
 ]
 
-async def fetch_ticker_data(ticker: str) -> Dict:
-    """Fetch latest data for a single ticker"""
+async def fetch_ticker_data(symbol: str) -> Dict:
+    """Fetch ticker data with error handling."""
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period='1d', interval='1m')
-        
-        if not hist.empty:
-            latest_price = hist['Close'].iloc[-1]
-            latest_prices[ticker] = latest_price
-            
-            # Update price history
-            if ticker not in price_history:
-                price_history[ticker] = []
-            
-            price_history[ticker].append({
-                'timestamp': datetime.now().isoformat(),
-                'price': latest_price,
-                'volume': hist['Volume'].iloc[-1]
-            })
-            
-            # Keep only last 100 data points
-            if len(price_history[ticker]) > 100:
-                price_history[ticker] = price_history[ticker][-100:]
-            
+        if '/' in symbol:  # Crypto pair
+            exchange = ccxt.binance()
+            ticker = exchange.fetch_ticker(symbol)
             return {
-                'ticker': ticker,
-                'price': latest_price,
-                'volume': hist['Volume'].iloc[-1],
+                'symbol': symbol,
+                'price': ticker['last'],
+                'volume': ticker['quoteVolume'],
+                'timestamp': datetime.now().isoformat()
+            }
+        else:  # Stock
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+            return {
+                'symbol': symbol,
+                'price': info.get('regularMarketPrice', 0),
+                'volume': info.get('regularMarketVolume', 0),
                 'timestamp': datetime.now().isoformat()
             }
     except Exception as e:
-        logger.error(f"Error fetching data for {ticker}: {str(e)}")
-    
-    return None
+        logger.error(f"Failed to get ticker '{symbol}' reason: {str(e)}")
+        return None
 
 async def update_market_data():
-    """Update market data for all tickers"""
+    """Update market data for all reliable tickers."""
     while True:
         try:
-            tasks = [fetch_ticker_data(ticker) for ticker in RELIABLE_TICKERS]
-            results = await asyncio.gather(*tasks)
+            for symbol in reliable_tickers:
+                data = await fetch_ticker_data(symbol)
+                if data:
+                    market_data[symbol] = data
+                    logger.info(f"Updated {symbol}: {data['price']}")
             
-            # Filter out None results and log successful updates
-            valid_results = [r for r in results if r is not None]
-            logger.info(f"Updated market data for {len(valid_results)} tickers")
+            # Keep only the last 100 data points for each ticker
+            for symbol in market_data:
+                if 'history' in market_data[symbol]:
+                    market_data[symbol]['history'] = market_data[symbol]['history'][-100:]
             
+            await asyncio.sleep(1)  # Update every second
         except Exception as e:
-            logger.error(f"Error in market data update: {str(e)}")
-        
-        # Wait for 1 minute before next update
-        await asyncio.sleep(60)
+            logger.error(f"Error updating market data: {str(e)}")
+            await asyncio.sleep(1)  # Wait before retrying
+
+def get_latest_prices() -> Dict:
+    """Get the latest prices for all tickers."""
+    return {symbol: data['price'] for symbol, data in market_data.items()}
 
 async def run_feeds():
-    """Start the market data feed"""
-    logger.info("Starting market data feed")
+    """Run all market data feeds."""
     await update_market_data()
-
-def get_latest_prices() -> Dict[str, float]:
-    """Get the latest prices for all tickers"""
-    return latest_prices
 
 def get_price_history(ticker: str) -> List[Dict]:
     """Get price history for a specific ticker"""
-    return price_history.get(ticker, []) 
+    return market_data.get(ticker, {}).get('history', []) 
