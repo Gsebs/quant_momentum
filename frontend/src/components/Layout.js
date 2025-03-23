@@ -16,16 +16,16 @@ import {
 } from '@mui/material';
 import {
   Menu as MenuIcon,
-  TrendingUp,
-  ShowChart,
-  Assessment,
-  Timeline,
+  Dashboard as DashboardIcon,
+  ShowChart as ShowChartIcon,
+  Assessment as AssessmentIcon,
+  Notifications as NotificationsIcon,
   GitHub,
 } from '@mui/icons-material';
 
 const drawerWidth = 240;
 
-const Layout = ({ children }) => {
+const Layout = ({ children, title }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -35,10 +35,10 @@ const Layout = ({ children }) => {
   };
 
   const menuItems = [
-    { text: 'Dashboard', icon: <TrendingUp />, href: '#dashboard' },
-    { text: 'Momentum Signals', icon: <ShowChart />, href: '#signals' },
-    { text: 'Performance', icon: <Assessment />, href: '#performance' },
-    { text: 'Analysis', icon: <Timeline />, href: '#analysis' },
+    { text: 'Dashboard', icon: <DashboardIcon />, href: '#dashboard' },
+    { text: 'Market Data', icon: <ShowChartIcon />, href: '#market-data' },
+    { text: 'Performance', icon: <AssessmentIcon />, href: '#performance' },
+    { text: 'Alerts', icon: <NotificationsIcon />, href: '#alerts' },
   ];
 
   const drawer = (
@@ -78,7 +78,7 @@ const Layout = ({ children }) => {
             <MenuIcon />
           </IconButton>
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-            Quant Momentum Strategy
+            {title}
           </Typography>
           <IconButton
             color="inherit"
