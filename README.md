@@ -1,133 +1,86 @@
-# Quantitative Momentum Trading Strategy
+# HFT Latency Arbitrage Trading System
 
-A sophisticated Python implementation of a quantitative momentum trading strategy targeting S&P 500 stocks. This project combines traditional momentum indicators with machine learning to identify and capitalize on market trends.
+A high-frequency trading system focused on latency arbitrage opportunities across multiple exchanges.
 
 ## Features
 
-- **Multi-timeframe Momentum Analysis**
-  - 1-month, 3-month, 6-month, and 12-month return calculations
-  - Weighted momentum scoring system
-  - Volatility-adjusted returns
-
-- **Technical Indicators**
-  - Relative Strength Index (RSI)
-  - Moving Average Convergence Divergence (MACD)
-  - Volatility measures
-  - Trend strength indicators
-
-- **Advanced Analytics**
-  - Machine learning signal enhancement
-  - Risk-adjusted position sizing
-  - Sector exposure analysis
-  - Comprehensive backtesting system
-
-- **Performance Analysis**
-  - Equity curve visualization
-  - Risk metrics calculation
-  - Trade analysis reporting
-  - Performance attribution
-
-## Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/quant_momentum.git
-   cd quant_momentum
-   ```
-
-2. Create and activate a virtual environment (recommended):
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Create necessary directories:
-   ```bash
-   mkdir -p data notebooks
-   ```
-
-## Usage
-
-1. Configure strategy parameters in `src/config.py`
-
-2. Run the strategy:
-   ```bash
-   python create_notebook.py
-   jupyter notebook notebooks/002_quantitative_momentum_strategy.ipynb
-   ```
-
-3. View results in the `data` directory:
-   - `momentum_signals.xlsx`: Detailed signal analysis
-   - `momentum_report.xlsx`: Strategy performance report
+- Real-time market data processing
+- Latency arbitrage detection
+- Automated order execution
+- Risk management system
+- Real-time monitoring dashboard
+- Performance analytics
 
 ## Project Structure
 
 ```
 quant_momentum/
-├── README.md                 # Project documentation
-├── requirements.txt          # Python dependencies
-├── create_notebook.py        # Notebook generation script
-├── src/                     # Source code
-│   ├── __init__.py
-│   ├── strategy.py          # Core momentum strategy
-│   ├── backtest.py         # Backtesting engine
-│   ├── data.py             # Data acquisition
-│   ├── config.py           # Configuration parameters
-│   ├── ml_model.py         # ML signal enhancement
-│   ├── indicators.py       # Technical indicators
-│   └── risk.py             # Risk management
-├── data/                   # Data storage (created at runtime)
-└── notebooks/              # Jupyter notebooks
-    └── 002_quantitative_momentum_strategy.ipynb
+├── backend/
+│   ├── api/
+│   ├── core/
+│   ├── models/
+│   └── services/
+├── frontend/
+│   ├── src/
+│   └── public/
+├── tests/
+├── requirements.txt
+└── README.md
 ```
 
-## Strategy Details
+## Setup Instructions
 
-### Signal Generation
-- Calculates momentum across multiple timeframes
-- Incorporates technical indicators for trend confirmation
-- Adjusts signals based on volatility and market conditions
+1. Create a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
 
-### Position Sizing
-- Risk-adjusted position sizing based on momentum strength
-- Volatility scaling for risk management
-- Sector exposure limits
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-### Risk Management
-- Stop-loss implementation
-- Position size limits
-- Sector diversification rules
-- Volatility-based position adjustment
+3. Set up environment variables:
+Create a `.env` file in the root directory with the following variables:
+```
+BINANCE_API_KEY=your_binance_api_key
+BINANCE_API_SECRET=your_binance_secret_key
+```
 
-## Performance Metrics
+4. Start the backend server:
+```bash
+cd backend
+uvicorn main:app --reload
+```
 
-The strategy tracks various performance metrics:
-- Total and annualized returns
-- Sharpe and Sortino ratios
-- Maximum drawdown
-- Win/loss ratio
-- Average trade profitability
-- Portfolio turnover
+5. Start the frontend development server:
+```bash
+cd frontend
+npm install
+npm start
+```
 
-## Data Sources
+## Configuration
 
-- Stock price data: Yahoo Finance
-- S&P 500 constituents: Wikipedia
-- Market data: Various public APIs
+The system can be configured through the frontend dashboard or by modifying the configuration files in the `backend/config` directory.
 
-## Disclaimer
+## Risk Management
 
-This software is for educational and research purposes only. It is not intended to be investment advice. Trading stocks carries significant risks, and you should carefully consider your financial condition before making any investment decisions.
+The system includes built-in risk management features:
+- Position limits
+- Loss limits
+- Maximum drawdown controls
+- Automated stop-loss mechanisms
 
-## Contributing
+## Monitoring
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Access the monitoring dashboard at `http://localhost:3000` to view:
+- Real-time trading activity
+- Performance metrics
+- Risk indicators
+- System health status
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License

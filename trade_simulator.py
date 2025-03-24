@@ -1,5 +1,7 @@
+import asyncio
 import logging
-from typing import Dict, List
+import time
+from typing import Dict, List, Optional
 from datetime import datetime
 import json
 from market_data_feed import get_latest_prices
@@ -9,100 +11,133 @@ from strategy_engine import get_cached_signals
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global variables to store trading state
+# Global state for tracking trades and PnL
 trades_log: List[Dict] = []
-cumulative_pnl: float = 0.0
-positions: Dict[str, Dict] = {}
-initial_capital: float = 1000000.0
-current_capital: float = initial_capital
+cumulative_pnl = 0.0
+positions: Dict[str, float] = {
+    "binance": 0.0,
+    "coinbase": 0.0
+}
 
-def execute_trade(ticker: str, signal: str, momentum_score: float) -> Dict:
-    """Execute a simulated trade"""
-    global positions, current_capital, cumulative_pnl
-    
+# Initial capital and current capital
+initial_capital = 10000.0  # Starting with 10,000 USDT
+current_capital = initial_capital
+
+# Simulation parameters
+LATENCY = 0.05  # 50ms latency
+SLIPPAGE_RATE = 0.0005  # 0.05% slippage
+FEE_RATE = 0.001  # 0.1% fee on each trade leg
+MAX_POSITION_SIZE = 1.0  # Maximum position size in base currency
+
+async def execute_trade(
+    buy_exchange: str,
+    sell_exchange: str,
+    buy_price: float,
+    sell_price: float,
+    quantity: float = 1.0
+) -> float:
+    """Simulate executing a buy on one exchange and a sell on another."""
+    global cumulative_pnl, current_capital, positions
+
     try:
-        latest_prices = get_latest_prices()
-        if ticker not in latest_prices:
-            return None
+        start_time = time.time()
         
-        current_price = latest_prices[ticker]
-        position_size = current_capital * 0.1  # Use 10% of capital per trade
+        # Simulate network/exchange latency
+        await asyncio.sleep(LATENCY)
         
-        if signal == 'BUY' and ticker not in positions:
-            # Calculate number of shares to buy
-            shares = position_size / current_price
-            
-            # Record the trade
-            trade = {
-                'timestamp': datetime.now().isoformat(),
-                'ticker': ticker,
-                'action': 'BUY',
-                'shares': shares,
-                'price': current_price,
-                'value': shares * current_price,
-                'momentum_score': momentum_score
-            }
-            
-            # Update positions and capital
-            positions[ticker] = {
-                'shares': shares,
-                'entry_price': current_price,
-                'entry_time': datetime.now().isoformat()
-            }
-            current_capital -= shares * current_price
-            
-            trades_log.append(trade)
-            logger.info(f"Executed BUY trade for {ticker}: {trade}")
-            return trade
-            
-        elif signal == 'SELL' and ticker in positions:
-            position = positions[ticker]
-            shares = position['shares']
-            
-            # Calculate PnL
-            pnl = shares * (current_price - position['entry_price'])
-            cumulative_pnl += pnl
-            
-            # Record the trade
-            trade = {
-                'timestamp': datetime.now().isoformat(),
-                'ticker': ticker,
-                'action': 'SELL',
-                'shares': shares,
-                'price': current_price,
-                'value': shares * current_price,
-                'pnl': pnl,
-                'momentum_score': momentum_score
-            }
-            
-            # Update capital and remove position
-            current_capital += shares * current_price
-            del positions[ticker]
-            
-            trades_log.append(trade)
-            logger.info(f"Executed SELL trade for {ticker}: {trade}")
-            return trade
-    
+        # Apply slippage: price moves unfavorably during latency
+        # If buying, price increases; if selling, price decreases
+        exec_buy_price = buy_price * (1 + SLIPPAGE_RATE)
+        exec_sell_price = sell_price * (1 - SLIPPAGE_RATE)
+        
+        # Apply fees on each leg
+        buy_fee = exec_buy_price * FEE_RATE * quantity
+        sell_fee = exec_sell_price * FEE_RATE * quantity
+        
+        # Calculate costs and proceeds
+        buy_cost = exec_buy_price * quantity + buy_fee
+        sell_proceeds = exec_sell_price * quantity - sell_fee
+        
+        # Calculate profit
+        gross_profit = sell_proceeds - buy_cost
+        net_profit = gross_profit
+        
+        # Update positions
+        positions[buy_exchange] += quantity
+        positions[sell_exchange] -= quantity
+        
+        # Update capital and PnL
+        current_capital += net_profit
+        cumulative_pnl += net_profit
+        
+        # Record trade details
+        trade_record = {
+            "timestamp": datetime.fromtimestamp(start_time).isoformat(),
+            "buy_exchange": buy_exchange,
+            "sell_exchange": sell_exchange,
+            "buy_price": exec_buy_price,
+            "sell_price": exec_sell_price,
+            "quantity": quantity,
+            "buy_fee": buy_fee,
+            "sell_fee": sell_fee,
+            "gross_profit": gross_profit,
+            "net_profit": net_profit,
+            "latency": LATENCY,
+            "slippage": SLIPPAGE_RATE
+        }
+        trades_log.append(trade_record)
+        
+        # Log trade execution
+        logger.info(
+            f"Executed trade: Buy {quantity} on {buy_exchange} at {exec_buy_price:.2f}, "
+            f"Sell on {sell_exchange} at {exec_sell_price:.2f}, "
+            f"Net Profit: {net_profit:.2f}"
+        )
+        
+        return net_profit
+        
     except Exception as e:
-        logger.error(f"Error executing trade for {ticker}: {str(e)}")
-    
-    return None
+        logger.error(f"Error executing trade: {e}")
+        return 0.0
 
 def get_trades_log() -> List[Dict]:
-    """Get the list of executed trades"""
+    """Return the list of executed trades."""
     return trades_log
 
 def get_cumulative_pnl() -> float:
-    """Get the cumulative PnL"""
+    """Return the total accumulated profit/loss."""
     return cumulative_pnl
 
-def get_positions() -> Dict[str, Dict]:
-    """Get current positions"""
-    return positions
+def get_current_positions() -> Dict[str, float]:
+    """Return current positions on each exchange."""
+    return positions.copy()
 
 def get_portfolio_value() -> float:
-    """Get current portfolio value"""
-    return current_capital + sum(
-        pos['shares'] * get_latest_prices().get(ticker, pos['entry_price'])
-        for ticker, pos in positions.items()
-    ) 
+    """Return current portfolio value (capital + unrealized PnL)."""
+    return current_capital
+
+def get_trade_statistics() -> Dict:
+    """Return statistics about executed trades."""
+    if not trades_log:
+        return {
+            "total_trades": 0,
+            "winning_trades": 0,
+            "losing_trades": 0,
+            "win_rate": 0.0,
+            "avg_profit": 0.0,
+            "max_profit": 0.0,
+            "max_loss": 0.0
+        }
+    
+    winning_trades = [t for t in trades_log if t["net_profit"] > 0]
+    losing_trades = [t for t in trades_log if t["net_profit"] < 0]
+    
+    return {
+        "total_trades": len(trades_log),
+        "winning_trades": len(winning_trades),
+        "losing_trades": len(losing_trades),
+        "win_rate": len(winning_trades) / len(trades_log),
+        "avg_profit": sum(t["net_profit"] for t in trades_log) / len(trades_log),
+        "max_profit": max(t["net_profit"] for t in trades_log),
+        "max_loss": min(t["net_profit"] for t in trades_log)
+    } 

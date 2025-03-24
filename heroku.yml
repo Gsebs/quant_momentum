@@ -1,0 +1,13 @@
+build:
+  docker:
+    web: Dockerfile
+  config:
+    PYTHON_VERSION: 3.9
+
+run:
+  web: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+
+setup:
+  addons:
+    - plan: heroku-postgresql:hobby-dev
+      as: DATABASE 

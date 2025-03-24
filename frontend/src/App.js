@@ -1,107 +1,135 @@
 import React, { useState, useEffect } from 'react';
-import { api } from './services/api';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import Box from '@mui/material/Box';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+
+// Components
+import Navbar from './components/Navbar';
+import Sidebar from './components/Sidebar';
+import Dashboard from './pages/Dashboard';
+import Opportunities from './pages/Opportunities';
+import Trades from './pages/Trades';
+import Performance from './pages/Performance';
+import Settings from './pages/Settings';
+
+// Theme configuration
+const theme = createTheme({
+  palette: {
+    mode: 'dark',
+    primary: {
+      main: '#2196f3',
+    },
+    secondary: {
+      main: '#f50057',
+    },
+    background: {
+      default: '#0a1929',
+      paper: '#132f4c',
+    },
+  },
+});
 
 function App() {
-  const [status, setStatus] = useState(null);
-  const [trades, setTrades] = useState([]);
-  const [error, setError] = useState(null);
+  const [open, setOpen] = useState(true);
+  const [systemStatus, setSystemStatus] = useState('stopped');
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const statusData = await api.getStatus();
-        setStatus(statusData);
-        
-        const tradesData = await api.getTrades();
-        setTrades(tradesData);
-      } catch (err) {
-        setError(err.message);
-        console.error('Error fetching data:', err);
-      }
-    };
-
-    // Fetch initial data
-    fetchData();
-
-    // Set up polling interval
-    const interval = setInterval(fetchData, 5000); // Poll every 5 seconds
-
-    // Cleanup on unmount
+    // Check system status on component mount
+    checkSystemStatus();
+    // Poll system status every 5 seconds
+    const interval = setInterval(checkSystemStatus, 5000);
     return () => clearInterval(interval);
   }, []);
 
-  if (error) {
+  const checkSystemStatus = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/health');
+      const data = await response.json();
+      setSystemStatus(data.status);
+      setIsLoading(false);
+    } catch (error) {
+      console.error('Error checking system status:', error);
+      setSystemStatus('error');
+      setIsLoading(false);
+    }
+  };
+
+  const toggleDrawer = () => {
+    setOpen(!open);
+  };
+
+  const startSystem = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/start', {
+        method: 'POST',
+      });
+      const data = await response.json();
+      setSystemStatus(data.status);
+    } catch (error) {
+      console.error('Error starting system:', error);
+    }
+  };
+
+  const stopSystem = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/stop', {
+        method: 'POST',
+      });
+      const data = await response.json();
+      setSystemStatus(data.status);
+    } catch (error) {
+      console.error('Error stopping system:', error);
+    }
+  };
+
+  if (isLoading) {
     return (
-      <div className="min-h-screen bg-red-50 p-4">
-        <div className="max-w-4xl mx-auto">
-          <h1 className="text-2xl font-bold text-red-600 mb-4">Error</h1>
-          <p className="text-red-700">{error}</p>
-        </div>
-      </div>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+          Loading...
+        </Box>
+      </ThemeProvider>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-2xl font-bold mb-4">HFT Latency Arbitrage Dashboard</h1>
-        
-        {/* Status Section */}
-        {status && (
-          <div className="bg-white rounded-lg shadow p-4 mb-4">
-            <h2 className="text-xl font-semibold mb-2">System Status</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-gray-600">Latest Prices:</p>
-                <p>Binance: ${status.latest_prices?.binance?.toFixed(2) || 'N/A'}</p>
-                <p>Coinbase: ${status.latest_prices?.coinbase?.toFixed(2) || 'N/A'}</p>
-              </div>
-              <div>
-                <p className="text-gray-600">Performance:</p>
-                <p>Trades: {status.trades_count || 0}</p>
-                <p>PnL: ${status.cumulative_pnl?.toFixed(2) || '0.00'}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Trades Section */}
-        <div className="bg-white rounded-lg shadow p-4">
-          <h2 className="text-xl font-semibold mb-2">Recent Trades</h2>
-          <div className="overflow-x-auto">
-            <table className="min-w-full">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="px-4 py-2">Time</th>
-                  <th className="px-4 py-2">Type</th>
-                  <th className="px-4 py-2">Price</th>
-                  <th className="px-4 py-2">Profit/Loss</th>
-                </tr>
-              </thead>
-              <tbody>
-                {trades.map((trade, index) => (
-                  <tr key={index} className="border-t">
-                    <td className="px-4 py-2">{new Date(trade.timestamp).toLocaleString()}</td>
-                    <td className="px-4 py-2">{trade.type}</td>
-                    <td className="px-4 py-2">${trade.price?.toFixed(2)}</td>
-                    <td className={`px-4 py-2 ${trade.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      ${trade.profit?.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-                {trades.length === 0 && (
-                  <tr>
-                    <td colSpan="4" className="px-4 py-2 text-center text-gray-500">
-                      No trades yet
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
+    <Router>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box sx={{ display: 'flex' }}>
+          <Navbar
+            open={open}
+            toggleDrawer={toggleDrawer}
+            systemStatus={systemStatus}
+            onStart={startSystem}
+            onStop={stopSystem}
+          />
+          <Sidebar open={open} />
+          <Box
+            component="main"
+            sx={{
+              backgroundColor: theme.palette.background.default,
+              flexGrow: 1,
+              height: '100vh',
+              overflow: 'auto',
+              pt: 8,
+              px: 3,
+            }}
+          >
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/opportunities" element={<Opportunities />} />
+              <Route path="/trades" element={<Trades />} />
+              <Route path="/performance" element={<Performance />} />
+              <Route path="/settings" element={<Settings />} />
+            </Routes>
+          </Box>
+        </Box>
+      </ThemeProvider>
+    </Router>
   );
 }
 
