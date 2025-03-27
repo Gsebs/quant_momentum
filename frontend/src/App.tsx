@@ -1,35 +1,39 @@
-import React from 'react';
-import { Box, CssBaseline, ThemeProvider, createTheme } from '@mui/material';
-import { Layout } from './components/Layout';
-import { TradingDashboard } from './components/TradingDashboard';
+import React, { useState } from 'react';
+import { Routes, Route } from 'react-router-dom';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import Layout from './components/Layout';
+import Dashboard from './pages/Dashboard';
+import Opportunities from './pages/Opportunities';
+import Trades from './pages/Trades';
+import Performance from './pages/Performance';
 
 const darkTheme = createTheme({
   palette: {
     mode: 'dark',
-    primary: {
-      main: '#2196f3',
-    },
-    secondary: {
-      main: '#f50057',
-    },
-    background: {
-      default: '#0a1929',
-      paper: '#132f4c',
-    },
   },
 });
 
-function App() {
+const App: React.FC = () => {
+  const [drawerOpen, setDrawerOpen] = useState(true);
+
+  const handleDrawerToggle = () => {
+    setDrawerOpen(!drawerOpen);
+  };
+
   return (
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
-      <Box sx={{ display: 'flex', minHeight: '100vh' }}>
-        <Layout title="Quant HFT Dashboard">
-          <TradingDashboard />
-        </Layout>
-      </Box>
+      <Layout open={drawerOpen} onDrawerToggle={handleDrawerToggle}>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/opportunities" element={<Opportunities />} />
+          <Route path="/trades" element={<Trades />} />
+          <Route path="/performance" element={<Performance />} />
+        </Routes>
+      </Layout>
     </ThemeProvider>
   );
-}
+};
 
-export default App; 
+export default App;
